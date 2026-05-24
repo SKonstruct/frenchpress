@@ -57,6 +57,11 @@ public final class SteamSession {
   }
 
   private static SteamSession login () {
+    // JavaSteam's SteamAuthentication encrypts the password with the BC-spelled
+    // "RSA/None/PKCS1Padding" via CryptoHelper.SEC_PROV. Register our no-BC shim
+    // provider (SEC_PROV) before any auth call so that transformation resolves.
+    FrenchpressJceProvider.ensureRegistered();
+
     CredentialStore store = CredentialStore.resolve();
     String carryGuardData = null;
 

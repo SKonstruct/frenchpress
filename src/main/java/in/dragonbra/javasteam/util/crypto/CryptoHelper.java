@@ -43,8 +43,16 @@ import java.util.zip.CRC32;
 public class CryptoHelper {
     private static final Logger logger = LogManager.getLogger(CryptoHelper.class);
 
-    /** Retained for link compatibility with upstream classes; unused by this shadow. */
-    public static final String SEC_PROV = "SunJCE";
+    /**
+     * Provider name used by JavaSteam's SteamAuthentication for
+     * {@code Cipher.getInstance("RSA/None/PKCS1Padding", SEC_PROV)}. The stock JDK
+     * has no provider that answers to the BC-spelled "None" mode, so we route it to
+     * the frenchpress shim provider ({@code co.frenchpress.FrenchpressJceProvider},
+     * registered via its ensureRegistered() before login), which delegates to the
+     * JDK's "RSA/ECB/PKCS1Padding". Kept as a literal to avoid a crypto -> co.frenchpress
+     * package dependency; must equal FrenchpressJceProvider.NAME.
+     */
+    public static final String SEC_PROV = "FrenchpressJCE";
 
     public static byte[] shaHash(MessageDigest digest, byte[] input) {
         if (input == null) {
