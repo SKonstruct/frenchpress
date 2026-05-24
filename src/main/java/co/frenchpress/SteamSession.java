@@ -16,6 +16,7 @@ import in.dragonbra.javasteam.steam.steamclient.callbacks.DisconnectedCallback;
 
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.HashMap;
@@ -310,8 +311,23 @@ public final class SteamSession {
     }
 
     @Override public CompletableFuture<Boolean> acceptDeviceConfirmation () {
+      emitLaunchStatus("Waiting for Steam Mobile App approval…");
       System.err.println("[frenchpress] waiting for Steam Mobile App approval");
       return CompletableFuture.completedFuture(true);
+    }
+
+    private static void emitLaunchStatus (String message) {
+      try {
+        Class<?> sysBoot = Class.forName(
+            "com.skarm.launcher.bootstrap.SkBootstrap",
+            false,
+            ClassLoader.getSystemClassLoader());
+        Method nativeLaunchStatus = sysBoot.getDeclaredMethod("nativeLaunchStatus", String.class);
+        nativeLaunchStatus.setAccessible(true);
+        nativeLaunchStatus.invoke(null, message);
+      } catch (Throwable t) {
+        System.err.println("[frenchpress] launch-status bridge unavailable: " + t);
+      }
     }
   }
 
