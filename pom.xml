@@ -31,11 +31,6 @@
       <artifactId>javasteam</artifactId>
       <version>${javasteam.version}</version>
     </dependency>
-    <dependency>
-      <groupId>org.bouncycastle</groupId>
-      <artifactId>bcprov-jdk18on</artifactId>
-      <version>1.83</version>
-    </dependency>
   </dependencies>
 
   <build>
@@ -67,11 +62,31 @@
                     <exclude>META-INF/*.DSA</exclude>
                     <exclude>META-INF/*.RSA</exclude>
                     <exclude>module-info.class</exclude>
+                    <!-- Dead weight at runtime. None loaded by the JVM. -->
+                    <exclude>**/*.proto</exclude>
+                    <exclude>META-INF/maven/**</exclude>
+                    <exclude>META-INF/versions/**</exclude>
+                    <exclude>META-INF/proguard/**</exclude>
+                    <exclude>META-INF/native-image/**</exclude>
+                    <exclude>META-INF/com.android.tools/**</exclude>
+                  </excludes>
+                </filter>
+                <!-- Strip upstream crypto classes so the JDK-only shadows win. -->
+                <filter>
+                  <artifact>in.dragonbra:javasteam</artifact>
+                  <excludes>
+                    <exclude>in/dragonbra/javasteam/util/crypto/CryptoHelper.class</exclude>
+                    <exclude>in/dragonbra/javasteam/util/crypto/RSACrypto.class</exclude>
                   </excludes>
                 </filter>
               </filters>
               <transformers>
+                <!-- Merge the many input manifests into one, no Main-Class since this is a shadow jar. -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer"/>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <!-- Merge license/notice texts. Apache-2.0 requires keeping them on redist. -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
               </transformers>
             </configuration>
           </execution>
