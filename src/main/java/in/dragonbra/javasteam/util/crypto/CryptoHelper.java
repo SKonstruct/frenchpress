@@ -189,8 +189,9 @@ public class CryptoHelper {
             Mac mac = Mac.getInstance("HmacSHA1");
             mac.init(new SecretKeySpec(hmacSecret, "HmacSHA1"));
             byte[] hmacBytes = mac.doFinal(baos.toByteArray());
-            for (int i = 0; i < iv.getValue().length - 3; i++) {
-                if (hmacBytes[i] != iv.getValue()[i]) {
+            byte[] ivBytes = iv.getValue();
+            for (int i = 0; i < ivBytes.length - 3; i++) {
+                if (hmacBytes[i] != ivBytes[i]) {
                     throw new CryptoException("NetFilterEncryption was unable to decrypt packet: "
                             + "HMAC from server did not match computed HMAC.");
                 }
