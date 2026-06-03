@@ -75,6 +75,14 @@ public class CryptoHelper {
         }
     });
 
+    private static final ThreadLocal<Mac> HMAC_SHA1_MAC = ThreadLocal.withInitial(() -> {
+        try {
+            return Mac.getInstance("HmacSHA1");
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("HmacSHA1 algorithm not found", e);
+        }
+    });
+
     // NoSuchProviderException kept in the signature for binary compatibility with
     // upstream callers, even though the default-provider lookup never throws it.
     public static byte[] shaHash(byte[] input) throws NoSuchAlgorithmException, NoSuchProviderException {
@@ -196,7 +204,7 @@ public class CryptoHelper {
         baos.write(iv.getValue(), iv.getValue().length - 3, 3);
         baos.write(plaintextData, 0, plaintextData.length);
         try {
-            Mac mac = Mac.getInstance("HmacSHA1");
+            Mac mac = HMAC_SHA1_MAC.get();
             mac.init(new SecretKeySpec(hmacSecret, "HmacSHA1"));
             byte[] hmacBytes = mac.doFinal(baos.toByteArray());
             byte[] ivBytes = iv.getValue();
@@ -206,7 +214,7 @@ public class CryptoHelper {
                             + "HMAC from server did not match computed HMAC.");
                 }
             }
-        } catch (InvalidKeyException | NoSuchAlgorithmException e) {
+        } catch (InvalidKeyException e) {
             throw new CryptoException("NetFilterEncryption was unable to decrypt packet", e);
         }
         return plaintextData;
@@ -230,12 +238,12 @@ public class CryptoHelper {
         baos.write(random, 0, random.length);
         baos.write(input, 0, input.length);
         try {
-            Mac mac = Mac.getInstance("HmacSHA1");
+            Mac mac = HMAC_SHA1_MAC.get();
             mac.init(new SecretKeySpec(hmacSecret, "HmacSHA1"));
             byte[] hash = mac.doFinal(baos.toByteArray());
             System.arraycopy(hash, 0, iv, 0, iv.length - random.length);
             return symmetricEncryptWithIV(input, key, iv);
-        } catch (InvalidKeyException | NoSuchAlgorithmException e) {
+        } catch (InvalidKeyException e) {
             throw new CryptoException("NetFilterEncryption was unable to decrypt packet", e);
         }
     }
