@@ -1,5 +1,8 @@
 package co.frenchpress;
 
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 /**
  * SPI for collecting Steam credentials interactively.
  *
@@ -84,8 +87,8 @@ public interface CredentialPrompt {
         return (CredentialPrompt) Class.forName(cls)
           .getDeclaredConstructor().newInstance();
       } catch (Throwable t) {
-        System.err.println("[frenchpress] credentialPrompt '" + cls
-          + "' failed to load (" + t + "); falling back");
+        Logger.getLogger(CredentialPrompt.class.getName()).log(Level.WARNING,
+          "[frenchpress] credentialPrompt '" + cls + "' failed to load; falling back", t);
       }
     }
 
@@ -93,7 +96,8 @@ public interface CredentialPrompt {
       var it = java.util.ServiceLoader.load(CredentialPrompt.class).iterator();
       if (it.hasNext()) return it.next();
     } catch (Throwable t) {
-      System.err.println("[frenchpress] ServiceLoader for CredentialPrompt failed: " + t);
+      Logger.getLogger(CredentialPrompt.class.getName()).log(Level.SEVERE,
+        "[frenchpress] ServiceLoader for CredentialPrompt failed", t);
     }
 
     return SwingCredentialPrompt.createIfSupported();
