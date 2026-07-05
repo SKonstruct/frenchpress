@@ -75,6 +75,30 @@ public class CryptoHelper {
         }
     });
 
+    private static final ThreadLocal<Cipher> AES_ECB_CIPHER = ThreadLocal.withInitial(() -> {
+        try {
+            return Cipher.getInstance("AES/ECB/NoPadding");
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
+            throw new RuntimeException("AES/ECB/NoPadding cipher not found", e);
+        }
+    });
+
+    private static final ThreadLocal<Cipher> AES_CBC_CIPHER = ThreadLocal.withInitial(() -> {
+        try {
+            return Cipher.getInstance("AES/CBC/PKCS5Padding");
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
+            throw new RuntimeException("AES/CBC/PKCS5Padding cipher not found", e);
+        }
+    });
+
+    private static final ThreadLocal<Mac> HMAC_SHA1_MAC = ThreadLocal.withInitial(() -> {
+        try {
+            return Mac.getInstance("HmacSHA1");
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("HmacSHA1 mac not found", e);
+        }
+    });
+
     // NoSuchProviderException kept in the signature for binary compatibility with
     // upstream callers, even though the default-provider lookup never throws it.
     public static byte[] shaHash(byte[] input) throws NoSuchAlgorithmException, NoSuchProviderException {
@@ -119,22 +143,21 @@ public class CryptoHelper {
         if (key == null) {
             throw new IllegalArgumentException("key is null");
         }
+        if (key.length != 32) {
+            throw new IllegalArgumentException("SymmetricDecrypt used with non 32 byte key!");
+        }
         try {
-            if (key.length != 32) {
-                logger.debug("SymmetricDecrypt used with non 32 byte key!");
-            }
             // Step 1: the first 16 bytes are the IV, itself AES/ECB-encrypted with the key.
-            Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
+            Cipher cipher = AES_ECB_CIPHER.get();
             byte[] cryptedIv = Arrays.copyOfRange(input, 0, 16);
             byte[] cipherText = Arrays.copyOfRange(input, cryptedIv.length, input.length);
             cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"));
             iv.setValue(cipher.doFinal(cryptedIv));
             // Step 2: decrypt the body in CBC mode using the recovered IV.
-            cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher = AES_CBC_CIPHER.get();
             cipher.init(Cipher.DECRYPT_MODE, (Key) new SecretKeySpec(key, "AES"), new IvParameterSpec(iv.getValue()));
             return cipher.doFinal(cipherText);
-        } catch (InvalidAlgorithmParameterException | InvalidKeyException | NoSuchAlgorithmException
-                 | BadPaddingException | IllegalBlockSizeException | NoSuchPaddingException e) {
+        } catch (InvalidAlgorithmParameterException | InvalidKeyException | BadPaddingException | IllegalBlockSizeException e) {
             throw new CryptoException("failed to symmetric decrypt", e);
         }
     }
@@ -151,12 +174,12 @@ public class CryptoHelper {
         }
         try {
             // ECB-encrypt Iv (for safety along the network)
-            Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
+            Cipher cipher = AES_ECB_CIPHER.get();
             cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"));
             byte[] cryptedIv = cipher.doFinal(iv);
 
             // CBC-encrypt (plain Iv drives the algo, since it will be decrypted first later)
-            cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher = AES_CBC_CIPHER.get();
             cipher.init(Cipher.ENCRYPT_MODE, (Key) new SecretKeySpec(key, "AES"), new IvParameterSpec(iv));
             byte[] cipherText = cipher.doFinal(input);
 
@@ -165,8 +188,7 @@ public class CryptoHelper {
             System.arraycopy(cryptedIv, 0, cryptedPkt, 0, cryptedIv.length);
             System.arraycopy(cipherText, 0, cryptedPkt, cryptedIv.length, cipherText.length);
             return cryptedPkt;
-        } catch (InvalidAlgorithmParameterException | InvalidKeyException | NoSuchAlgorithmException
-                 | BadPaddingException | IllegalBlockSizeException | NoSuchPaddingException e) {
+        } catch (InvalidAlgorithmParameterException | InvalidKeyException | BadPaddingException | IllegalBlockSizeException e) {
             throw new CryptoException("failed to symmetric encrypt", e);
         }
     }
@@ -196,16 +218,17 @@ public class CryptoHelper {
         baos.write(iv.getValue(), iv.getValue().length - 3, 3);
         baos.write(plaintextData, 0, plaintextData.length);
         try {
-            Mac mac = Mac.getInstance("HmacSHA1");
+            Mac mac = HMAC_SHA1_MAC.get();
             mac.init(new SecretKeySpec(hmacSecret, "HmacSHA1"));
             byte[] hmacBytes = mac.doFinal(baos.toByteArray());
-            for (int i = 0; i < iv.getValue().length - 3; i++) {
-                if (hmacBytes[i] != iv.getValue()[i]) {
+            byte[] ivBytes = iv.getValue();
+            for (int i = 0; i < ivBytes.length - 3; i++) {
+                if (hmacBytes[i] != ivBytes[i]) {
                     throw new CryptoException("NetFilterEncryption was unable to decrypt packet: "
                             + "HMAC from server did not match computed HMAC.");
                 }
             }
-        } catch (InvalidKeyException | NoSuchAlgorithmException e) {
+        } catch (InvalidKeyException e) {
             throw new CryptoException("NetFilterEncryption was unable to decrypt packet", e);
         }
         return plaintextData;
@@ -229,12 +252,12 @@ public class CryptoHelper {
         baos.write(random, 0, random.length);
         baos.write(input, 0, input.length);
         try {
-            Mac mac = Mac.getInstance("HmacSHA1");
+            Mac mac = HMAC_SHA1_MAC.get();
             mac.init(new SecretKeySpec(hmacSecret, "HmacSHA1"));
             byte[] hash = mac.doFinal(baos.toByteArray());
             System.arraycopy(hash, 0, iv, 0, iv.length - random.length);
             return symmetricEncryptWithIV(input, key, iv);
-        } catch (InvalidKeyException | NoSuchAlgorithmException e) {
+        } catch (InvalidKeyException e) {
             throw new CryptoException("NetFilterEncryption was unable to decrypt packet", e);
         }
     }
