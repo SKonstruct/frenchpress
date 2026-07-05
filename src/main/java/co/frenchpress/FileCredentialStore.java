@@ -9,6 +9,8 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.prefs.Preferences;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -29,6 +31,8 @@ import javax.crypto.spec.SecretKeySpec;
  */
 public final class FileCredentialStore implements CredentialStore {
 
+  private static final Logger log = Logger.getLogger(FileCredentialStore.class.getName());
+
   @Override public String load () {
     try {
       Path p = path();
@@ -42,7 +46,7 @@ public final class FileCredentialStore implements CredentialStore {
         return s;
       }
     } catch (Throwable t) {
-      System.err.println("[frenchpress] credential load failed: " + t);
+      log.log(Level.WARNING, "[frenchpress] credential load failed", t);
       return null;
     }
   }
@@ -60,13 +64,13 @@ public final class FileCredentialStore implements CredentialStore {
       trySetPerms(p, Set.of(PosixFilePermission.OWNER_READ,
         PosixFilePermission.OWNER_WRITE));
     } catch (Throwable t) {
-      System.err.println("[frenchpress] credential save failed: " + t);
+      log.log(Level.WARNING, "[frenchpress] credential save failed", t);
     }
   }
 
   @Override public void clear () {
     try { Files.deleteIfExists(path()); }
-    catch (Throwable t) { System.err.println("[frenchpress] credential clear failed: " + t); }
+    catch (Throwable t) { log.log(Level.WARNING, "[frenchpress] credential clear failed", t); }
   }
 
   private static void trySetPerms (Path p, Set<PosixFilePermission> perms) {

@@ -1,6 +1,7 @@
 package com.threerings.froth;
 
 import co.frenchpress.SteamSession;
+import java.util.logging.Logger;
 
 /**
  * frenchpress shim replacement for com.threerings.froth.SteamAPI.
@@ -14,11 +15,13 @@ import co.frenchpress.SteamSession;
  */
 public class SteamAPI
 {
+  private static final Logger log = Logger.getLogger(SteamAPI.class.getName());
+
   public static boolean init () {
     if (_initialized) return true;
-    System.err.println("[frenchpress] SteamAPI.init() entered");
+    log.info("[frenchpress] SteamAPI.init() entered");
     _initialized = SteamSession.get() != null;
-    System.err.println("[frenchpress] SteamAPI.init() -> " + _initialized);
+    log.info("[frenchpress] SteamAPI.init() -> " + _initialized);
     if (_initialized) {
       // SK registers SteamServerCallback listeners during its boot and waits
       // for steamServersConnected() to proceed past its "connecting to Steam"

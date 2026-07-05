@@ -1,5 +1,8 @@
 package co.frenchpress;
 
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 /**
  * Pluggable persistence for the Steam refresh token (and Steam Guard machine
  * token) so relaunches skip password + 2FA.
@@ -40,15 +43,16 @@ public interface CredentialStore {
         return (CredentialStore) Class.forName(cls)
           .getDeclaredConstructor().newInstance();
       } catch (Throwable t) {
-        System.err.println("[frenchpress] credentialStore '" + cls
-          + "' failed to load (" + t + "); falling back to default");
+        Logger.getLogger(CredentialStore.class.getName()).log(Level.WARNING,
+          "[frenchpress] credentialStore '" + cls + "' failed to load; falling back to default", t);
       }
     }
     try {
       var it = java.util.ServiceLoader.load(CredentialStore.class).iterator();
       if (it.hasNext()) return it.next();
     } catch (Throwable t) {
-      System.err.println("[frenchpress] ServiceLoader for CredentialStore failed: " + t);
+      Logger.getLogger(CredentialStore.class.getName()).log(Level.SEVERE,
+        "[frenchpress] ServiceLoader for CredentialStore failed", t);
     }
     return new FileCredentialStore();
   }
