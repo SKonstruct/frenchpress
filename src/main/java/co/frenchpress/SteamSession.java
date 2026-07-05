@@ -263,8 +263,12 @@ public final class SteamSession {
           false,
           ClassLoader.getSystemClassLoader());
       Method m = sysBoot.getDeclaredMethod("nativeSteamKeepAlive", boolean.class);
-      m.setAccessible(true);
-      m.invoke(null, active);
+      try {
+        m.setAccessible(true);
+        m.invoke(null, active);
+      } finally {
+        m.setAccessible(false);
+      }
     } catch (Throwable t) {
       log.log(Level.WARNING, "[frenchpress] keep-alive bridge unavailable", t);
     }
@@ -361,8 +365,12 @@ public final class SteamSession {
             false,
             ClassLoader.getSystemClassLoader());
         Method nativeLaunchStatus = sysBoot.getDeclaredMethod("nativeLaunchStatus", String.class);
-        nativeLaunchStatus.setAccessible(true);
-        nativeLaunchStatus.invoke(null, message);
+        try {
+          nativeLaunchStatus.setAccessible(true);
+          nativeLaunchStatus.invoke(null, message);
+        } finally {
+          nativeLaunchStatus.setAccessible(false);
+        }
       } catch (Throwable t) {
         log.log(Level.WARNING, "[frenchpress] launch-status bridge unavailable", t);
       }
