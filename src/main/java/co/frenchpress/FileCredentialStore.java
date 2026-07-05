@@ -56,7 +56,13 @@ public final class FileCredentialStore implements CredentialStore {
   private static void trySetPerms (Path p, Set<PosixFilePermission> perms) {
     try { Files.setPosixFilePermissions(p, perms); }
     catch (UnsupportedOperationException | IOException ignored) {
-      // Non-POSIX FS, rely on dir isolation.
+      java.io.File f = p.toFile();
+      f.setReadable(false, false);
+      f.setWritable(false, false);
+      f.setExecutable(false, false);
+      if (perms.contains(PosixFilePermission.OWNER_READ)) f.setReadable(true, true);
+      if (perms.contains(PosixFilePermission.OWNER_WRITE)) f.setWritable(true, true);
+      if (perms.contains(PosixFilePermission.OWNER_EXECUTE)) f.setExecutable(true, true);
     }
   }
 
