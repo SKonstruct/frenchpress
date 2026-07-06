@@ -46,6 +46,7 @@ public class SteamAPI
     if (!_initialized) return;
     if (_fireConnectedOnNextTick) {
       _fireConnectedOnNextTick = false;
+      SteamUser.fireServersConnected();
     }
   }
 

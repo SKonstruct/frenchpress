@@ -71,82 +71,82 @@ public class SteamInput
     public float rotVelX, rotVelY, rotVelZ;
   }
 
-  private static UnsupportedOperationException unused () {
-    return new UnsupportedOperationException("frenchpress: SteamInput unused");
+  private static void warn () {
+    System.err.println("[frenchpress] WARNING: SteamInput method called but stubbed/unused");
   }
 
-  public static boolean init (boolean explicitlyCallRunFrame) { throw unused(); }
-  public static boolean shutdown () { throw unused(); }
-  public static boolean setInputActionManifestFilePath (String path) { throw unused(); }
-  public static void runFrame () { throw unused(); }
-  public static boolean waitForData (boolean waitForever, int timeout) { throw unused(); }
-  public static boolean newDataAvailable () { throw unused(); }
-  public static int getConnectedControllers (long[] handlesOut) { throw unused(); }
-  public static void enableDeviceCallbacks () { throw unused(); }
-  public static long getActionSetHandle (String actionSetName) { throw unused(); }
-  public static void activateActionSet (long inputHandle, long actionSetHandle) { throw unused(); }
-  public static long getCurrentActionSet (long inputHandle) { throw unused(); }
-  public static void activateActionSetLayer (long inputHandle, long actionSetLayerHandle) { throw unused(); }
-  public static void deactivateActionSetLayer (long inputHandle, long actionSetLayerHandle) { throw unused(); }
-  public static void deactivateAllActionSetLayers (long inputHandle) { throw unused(); }
-  public static int getActiveActionSetLayers (long inputHandle, long[] handlesOut) { throw unused(); }
-  public static long getDigitalActionHandle (String actionName) { throw unused(); }
+  public static boolean init (boolean explicitlyCallRunFrame) { warn(); return false; }
+  public static boolean shutdown () { warn(); return false; }
+  public static boolean setInputActionManifestFilePath (String path) { warn(); return false; }
+  public static void runFrame () { warn(); }
+  public static boolean waitForData (boolean waitForever, int timeout) { warn(); return false; }
+  public static boolean newDataAvailable () { warn(); return false; }
+  public static int getConnectedControllers (long[] handlesOut) { warn(); return 0; }
+  public static void enableDeviceCallbacks () { warn(); }
+  public static long getActionSetHandle (String actionSetName) { warn(); return 0L; }
+  public static void activateActionSet (long inputHandle, long actionSetHandle) { warn(); }
+  public static long getCurrentActionSet (long inputHandle) { warn(); return 0L; }
+  public static void activateActionSetLayer (long inputHandle, long actionSetLayerHandle) { warn(); }
+  public static void deactivateActionSetLayer (long inputHandle, long actionSetLayerHandle) { warn(); }
+  public static void deactivateAllActionSetLayers (long inputHandle) { warn(); }
+  public static int getActiveActionSetLayers (long inputHandle, long[] handlesOut) { warn(); return 0; }
+  public static long getDigitalActionHandle (String actionName) { warn(); return 0L; }
   public static boolean getDigitalActionData (
-      long inputHandle, long digitalActionHandle, DigitalActionData data) { throw unused(); }
+      long inputHandle, long digitalActionHandle, DigitalActionData data) { warn(); return false; }
   public static int getDigitalActionOrigins (
       long inputHandle, long actionSetHandle, long digitalActionHandle, int[] originsOut) {
-    throw unused();
+    warn(); return 0;
   }
-  public static String getStringForDigitalActionName (long digitalActionHandle) { throw unused(); }
-  public static long getAnalogActionHandle (String actionName) { throw unused(); }
+  public static String getStringForDigitalActionName (long digitalActionHandle) { warn(); return ""; }
+  public static long getAnalogActionHandle (String actionName) { warn(); return 0L; }
   public static boolean getAnalogActionData (
-      long inputHandle, long analogActionHandle, AnalogActionData data) { throw unused(); }
+      long inputHandle, long analogActionHandle, AnalogActionData data) { warn(); return false; }
   public static int getAnalogActionOrigins (
       long inputHandle, long actionSetHandle, long analogActionHandle, int[] originsOut) {
-    throw unused();
+    warn(); return 0;
   }
-  public static String getStringForAnalogActionName (long analogActionHandle) { throw unused(); }
-  public static void stopAnalogActionMomentum (long inputHandle, long analogActionHandle) { throw unused(); }
-  public static String getGlyphPNGForActionOrigin (int origin, GlyphSize size, int flags) { throw unused(); }
-  public static String getGlyphSVGForActionOrigin (int origin, int flags) { throw unused(); }
+  public static String getStringForAnalogActionName (long analogActionHandle) { warn(); return ""; }
+  public static void stopAnalogActionMomentum (long inputHandle, long analogActionHandle) { warn(); }
+  public static String getGlyphPNGForActionOrigin (int origin, GlyphSize size, int flags) { warn(); return ""; }
+  public static String getGlyphSVGForActionOrigin (int origin, int flags) { warn(); return ""; }
   @Deprecated
-  public static String getGlyphForActionOriginLegacy (int origin) { throw unused(); }
-  public static String getStringForActionOrigin (int origin) { throw unused(); }
-  public static String getStringForXboxOrigin (int origin) { throw unused(); }
-  public static String getGlyphForXboxOrigin (int origin) { throw unused(); }
-  public static int getActionOriginFromXboxOrigin (long inputHandle, int xboxOrigin) { throw unused(); }
-  public static int translateActionOrigin (InputType destinationType, int sourceOrigin) { throw unused(); }
-  public static boolean getMotionData (long inputHandle, MotionData data) { throw unused(); }
-  public static void triggerVibration (long inputHandle, int leftSpeed, int rightSpeed) { throw unused(); }
+  public static String getGlyphForActionOriginLegacy (int origin) { warn(); return ""; }
+  public static String getStringForActionOrigin (int origin) { warn(); return ""; }
+  public static String getStringForXboxOrigin (int origin) { warn(); return ""; }
+  public static String getGlyphForXboxOrigin (int origin) { warn(); return ""; }
+  public static int getActionOriginFromXboxOrigin (long inputHandle, int xboxOrigin) { warn(); return 0; }
+  public static int translateActionOrigin (InputType destinationType, int sourceOrigin) { warn(); return 0; }
+  public static boolean getMotionData (long inputHandle, MotionData data) { warn(); return false; }
+  public static void triggerVibration (long inputHandle, int leftSpeed, int rightSpeed) { warn(); }
   public static void triggerVibrationExtended (
       long inputHandle, int leftSpeed, int rightSpeed,
       int leftTriggerSpeed, int rightTriggerSpeed) {
-    throw unused();
+    warn();
   }
   public static void triggerSimpleHapticEvent (
       long inputHandle, int hapticLocation,
       int intensity, int gainDB, int otherIntensity, int otherGainDB) {
-    throw unused();
+    warn();
   }
   public static void setLEDColor (long inputHandle, int colorR, int colorG, int colorB, LEDFlag flag) {
-    throw unused();
+    warn();
   }
   @Deprecated
   public static void legacyTriggerHapticPulse (
       long inputHandle, ControllerPad targetPad, int durationMicroSec) {
-    throw unused();
+    warn();
   }
   @Deprecated
   public static void legacyTriggerRepeatedHapticPulse (
       long inputHandle, ControllerPad targetPad,
       int durationMicroSec, int offMicroSec, int repeat, int flags) {
-    throw unused();
+    warn();
   }
-  public static boolean showBindingPanel (long inputHandle) { throw unused(); }
-  public static InputType getInputTypeForHandle (long inputHandle) { throw unused(); }
-  public static long getControllerForGamepadIndex (int index) { throw unused(); }
-  public static int getGamepadIndexForController (long inputHandle) { throw unused(); }
-  public static boolean getDeviceBindingRevision (long inputHandle, int[] revisionOut) { throw unused(); }
-  public static int getRemotePlaySessionID (long inputHandle) { throw unused(); }
-  public static int getSessionInputConfigurationSettings () { throw unused(); }
+  public static boolean showBindingPanel (long inputHandle) { warn(); return false; }
+  public static InputType getInputTypeForHandle (long inputHandle) { warn(); return InputType.UNKNOWN; }
+  public static long getControllerForGamepadIndex (int index) { warn(); return 0L; }
+  public static int getGamepadIndexForController (long inputHandle) { warn(); return 0; }
+  public static boolean getDeviceBindingRevision (long inputHandle, int[] revisionOut) { warn(); return false; }
+  public static int getRemotePlaySessionID (long inputHandle) { warn(); return 0; }
+  public static int getSessionInputConfigurationSettings () { warn(); return 0; }
 }

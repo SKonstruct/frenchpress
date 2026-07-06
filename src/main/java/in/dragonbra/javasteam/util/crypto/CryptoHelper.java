@@ -146,6 +146,9 @@ public class CryptoHelper {
         if (key.length != 32) {
             throw new IllegalArgumentException("SymmetricDecrypt used with non 32 byte key!");
         }
+        if (input.length < 16) {
+            throw new CryptoException("SymmetricDecrypt used with input shorter than 16 bytes!");
+        }
         try {
             // Step 1: the first 16 bytes are the IV, itself AES/ECB-encrypted with the key.
             Cipher cipher = AES_ECB_CIPHER.get();

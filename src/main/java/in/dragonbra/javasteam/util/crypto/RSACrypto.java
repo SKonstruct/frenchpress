@@ -72,6 +72,10 @@ public class RSACrypto {
     }
 
     public byte[] encrypt(byte[] input) {
+        if (this.cipher == null) {
+            logger.debug("RSACrypto: cipher not initialized, returning null");
+            return null;
+        }
         try {
             return this.cipher.doFinal(input);
         } catch (BadPaddingException | IllegalBlockSizeException e) {
