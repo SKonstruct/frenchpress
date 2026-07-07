@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Set;
@@ -56,9 +57,21 @@ public final class FileCredentialStore implements CredentialStore {
       Path p = path();
       Path dir = p.getParent();
       if (dir != null) {
-        Files.createDirectories(dir);
-        trySetPerms(dir, Set.of(PosixFilePermission.OWNER_READ,
-          PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE));
+        try {
+          Files.createDirectories(dir, PosixFilePermissions.asFileAttribute(
+            Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE)));
+        } catch (UnsupportedOperationException e) {
+          Files.createDirectories(dir);
+          trySetPerms(dir, Set.of(PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE));
+        }
+      }
+      Files.deleteIfExists(p);
+      try {
+        Files.createFile(p, PosixFilePermissions.asFileAttribute(
+          Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)));
+      } catch (UnsupportedOperationException e) {
+        // Non-POSIX FS, rely on trySetPerms later if possible
       }
       Files.writeString(p, encrypt(data));
       trySetPerms(p, Set.of(PosixFilePermission.OWNER_READ,
