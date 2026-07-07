@@ -29,7 +29,8 @@ public final class RsaNoneCipherSpi extends CipherSpi {
 
     public RsaNoneCipherSpi() throws GeneralSecurityException {
         // Prevent a possible infinite loop of provider calls with the JDK name set explicitly.
-        this.delegate = Cipher.getInstance("RSA/ECB/PKCS1Padding", "SunJCE");
+        // Using generic lookup is safe because FrenchpressJceProvider does not register RSA/ECB.
+        this.delegate = Cipher.getInstance("RSA/ECB/PKCS1Padding");
     }
 
     @Override protected void engineSetMode(String mode) throws NoSuchAlgorithmException {

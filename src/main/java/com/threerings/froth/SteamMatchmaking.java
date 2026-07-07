@@ -37,29 +37,36 @@ public class SteamMatchmaking
     void gameLobbyJoinRequest (long steamIdLobby, long steamIdFriend);
   }
 
+  private static void warn () {
+    System.err.println("[frenchpress] WARNING: SteamMatchmaking method called but stubbed/unused");
+  }
+
   public static void addGameLobbyJoinRequestCallback (GameLobbyJoinRequestCallback callback) {
-    throw new UnsupportedOperationException("frenchpress: SteamMatchmaking unused");
+    warn();
   }
   public static void removeGameLobbyJoinRequestCallback (GameLobbyJoinRequestCallback callback) {
-    throw new UnsupportedOperationException("frenchpress: SteamMatchmaking unused");
+    warn();
   }
 
   public static void createLobby (LobbyType type, int maxMembers, CreateLobbyCallback callback) {
-    throw new UnsupportedOperationException("frenchpress: SteamMatchmaking unused");
+    warn();
   }
   public static void joinLobby (long steamIdLobby, EnterLobbyCallback callback) {
-    throw new UnsupportedOperationException("frenchpress: SteamMatchmaking unused");
+    warn();
   }
   public static void leaveLobby (long steamIdLobby) {
-    throw new UnsupportedOperationException("frenchpress: SteamMatchmaking unused");
+    warn();
   }
   public static boolean inviteUserToLobby (long steamIdLobby, long steamIdInvitee) {
-    throw new UnsupportedOperationException("frenchpress: SteamMatchmaking unused");
+    warn();
+    return false;
   }
   public static String getLobbyData (long steamIdLobby, String key) {
-    throw new UnsupportedOperationException("frenchpress: SteamMatchmaking unused");
+    warn();
+    return "";
   }
   public static boolean setLobbyData (long steamIdLobby, String key, String value) {
-    throw new UnsupportedOperationException("frenchpress: SteamMatchmaking unused");
+    warn();
+    return false;
   }
 }

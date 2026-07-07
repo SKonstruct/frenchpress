@@ -3,6 +3,8 @@ package co.frenchpress;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Built-in {@link CredentialPrompt} for desktop (Linux/macOS/Windows) JVM
@@ -13,6 +15,8 @@ import java.awt.event.*;
  * a different strategy (env vars, etc.).
  */
 public final class SwingCredentialPrompt implements CredentialPrompt {
+
+  private static final Logger log = Logger.getLogger(SwingCredentialPrompt.class.getName());
 
   /**
    * @return a new instance if AWT/Swing is present and a display is available,
@@ -193,7 +197,7 @@ public final class SwingCredentialPrompt implements CredentialPrompt {
     try {
       SwingUtilities.invokeAndWait(r);
     } catch (Exception e) {
-      System.err.println("[frenchpress] Swing dialog error: " + e);
+      log.log(Level.SEVERE, "[frenchpress] Swing dialog error", e);
     }
   }
 }

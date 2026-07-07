@@ -26,6 +26,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * JavaSteam-backed Steam session, owned by the shim and lazily logged in
@@ -44,6 +46,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link SwingCredentialPrompt} automatically.
  */
 public final class SteamSession {
+
+  private static final Logger log = Logger.getLogger(SteamSession.class.getName());
 
   /** Spiral Knights' Steam AppID. */
   public static final int SK_APPID = 99900;
@@ -80,13 +84,13 @@ public final class SteamSession {
     // 1. Steady state: a previously stored refresh token skips password + 2FA.
     StoredCreds saved = StoredCreds.parse(store.load());
     if (saved != null) {
-      System.err.println("[frenchpress] trying stored refresh token for account "
+      log.info("[frenchpress] trying stored refresh token for account "
         + saved.account);
       SteamSession s = attempt(store, saved, null, null, null, null);
       if (s != null) return s;
       // Token rejected (expired/revoked). Keep the guard token to skip 2FA
       // on re-auth, then fall through to credentials.
-      System.err.println("[frenchpress] stored token rejected; clearing and "
+      log.info("[frenchpress] stored token rejected; clearing and "
         + "falling back to credentials");
       carryGuardData = saved.guardData;
       store.clear();
@@ -98,7 +102,7 @@ public final class SteamSession {
     String envPass = System.getenv("FRENCHPRESS_STEAM_PASS");
     if (envUser != null && !envUser.isEmpty()
         && envPass != null && !envPass.isEmpty()) {
-      System.err.println("[frenchpress] login() using env-var credentials "
+      log.info("[frenchpress] login() using env-var credentials "
         + "(user len=" + envUser.length() + ")");
       return attempt(store, null, envUser, envPass, carryGuardData,
         CredentialPrompt.resolve());
@@ -107,14 +111,14 @@ public final class SteamSession {
     // 3. Interactive UI prompt.
     CredentialPrompt prompt = CredentialPrompt.resolve();
     if (prompt == null) {
-      System.err.println("[frenchpress] no stored token, no env-var credentials, "
+      log.warning("[frenchpress] no stored token, no env-var credentials, "
         + "and no UI prompt available; Steam auth will not proceed");
       return null;
     }
 
     Credentials creds = prompt.promptForLogin();
     if (creds == null || creds.isWebAccount()) {
-      System.err.println("[frenchpress] user chose web account; skipping Steam login");
+      log.info("[frenchpress] user chose web account; skipping Steam login");
       return null;
     }
     return attempt(store, null, creds.username(), creds.password(),
@@ -137,7 +141,7 @@ public final class SteamSession {
     SteamUser steamUser = client.getHandler(SteamUser.class);
     SteamAuthTicket authTicket = client.getHandler(SteamAuthTicket.class);
     if (steamUser == null || authTicket == null) {
-      System.err.println("[frenchpress] JavaSteam handlers unavailable; aborting login");
+      log.severe("[frenchpress] JavaSteam handlers unavailable; aborting login");
       return null;
     }
 
@@ -149,7 +153,7 @@ public final class SteamSession {
     manager.subscribe(ConnectedCallback.class, cb -> {
       try {
         if (saved != null) {
-          System.err.println("[frenchpress] ConnectedCallback; logging on with stored token");
+          log.info("[frenchpress] ConnectedCallback; logging on with stored token");
           LogOnDetails logon = new LogOnDetails();
           logon.setUsername(saved.account);
           logon.setAccessToken(saved.refreshToken);
@@ -157,7 +161,7 @@ public final class SteamSession {
           return;
         }
 
-        System.err.println("[frenchpress] ConnectedCallback fired; starting auth flow");
+        log.info("[frenchpress] ConnectedCallback fired; starting auth flow");
         AuthSessionDetails details = new AuthSessionDetails();
         details.username = user;
         details.password = pass;
@@ -178,22 +182,15 @@ public final class SteamSession {
         logon.setAccessToken(poll.getRefreshToken());
         steamUser.logOn(logon);
       } catch (Throwable e) {
-        System.err.println("[frenchpress] auth flow failed:");
-        e.printStackTrace(System.err);
-        Throwable c = e.getCause();
-        while (c != null) {
-          System.err.println("[frenchpress] caused by:");
-          c.printStackTrace(System.err);
-          c = c.getCause();
-        }
+        log.log(Level.SEVERE, "[frenchpress] auth flow failed:", e);
         done.countDown();
       }
     });
 
     manager.subscribe(LoggedOnCallback.class, cb -> {
-      System.err.println("[frenchpress] LoggedOnCallback result=" + cb.getResult());
+      log.info("[frenchpress] LoggedOnCallback result=" + cb.getResult());
       if (cb.getResult() != EResult.OK) {
-        System.err.println("[frenchpress] logon failed: " + cb.getResult()
+        log.severe("[frenchpress] logon failed: " + cb.getResult()
           + " / " + cb.getExtendedResult());
         done.countDown();
         return;
@@ -202,14 +199,14 @@ public final class SteamSession {
         ? cb.getClientSteamID().convertToUInt64() : 0L;
       if (toPersist[0] != null) {
         store.save(toPersist[0].serialize());
-        System.err.println("[frenchpress] persisted refresh token for future launches");
+        log.info("[frenchpress] persisted refresh token for future launches");
       }
       ok[0] = true;
       done.countDown();
     });
 
     manager.subscribe(DisconnectedCallback.class, cb -> {
-      System.err.println("[frenchpress] DisconnectedCallback userInitiated="
+      log.info("[frenchpress] DisconnectedCallback userInitiated="
         + cb.isUserInitiated());
       if (done.getCount() > 0) done.countDown();
     });
@@ -223,7 +220,7 @@ public final class SteamSession {
     session.pump = pump;
     pump.start();
 
-    System.err.println("[frenchpress] connecting to Steam...");
+    log.info("[frenchpress] connecting to Steam...");
     // Keep-alive bracket: on Android the host process is killed when the user
     // tabs out to approve the sign-in (Steam Mobile App push, or reading a Steam
     // Guard code), which aborts the poll below and forces a fresh login next
@@ -235,7 +232,7 @@ public final class SteamSession {
       setKeepAlive(true);
       client.connect();
       if (!done.await(AUTH_WAIT_SECONDS, TimeUnit.SECONDS)) {
-        System.err.println("[frenchpress] login timed out after " + AUTH_WAIT_SECONDS + "s");
+        log.warning("[frenchpress] login timed out after " + AUTH_WAIT_SECONDS + "s");
       }
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
@@ -244,11 +241,11 @@ public final class SteamSession {
     }
 
     if (!ok[0]) {
-      System.err.println("[frenchpress] attempt() returning null (auth not OK)");
+      log.warning("[frenchpress] attempt() returning null (auth not OK)");
       session.disconnect();
       return null;
     }
-    System.err.println("[frenchpress] attempt() returning session; steamID=" + session.steamId);
+    log.info("[frenchpress] attempt() returning session; steamID=" + session.steamId);
     return session;
   }
 
@@ -266,10 +263,14 @@ public final class SteamSession {
           false,
           ClassLoader.getSystemClassLoader());
       Method m = sysBoot.getDeclaredMethod("nativeSteamKeepAlive", boolean.class);
-      m.setAccessible(true);
-      m.invoke(null, active);
+      try {
+        m.setAccessible(true);
+        m.invoke(null, active);
+      } finally {
+        m.setAccessible(false);
+      }
     } catch (Throwable t) {
-      System.err.println("[frenchpress] keep-alive bridge unavailable: " + t);
+      log.log(Level.WARNING, "[frenchpress] keep-alive bridge unavailable", t);
     }
   }
 
@@ -353,7 +354,7 @@ public final class SteamSession {
 
     @Override public CompletableFuture<Boolean> acceptDeviceConfirmation () {
       emitLaunchStatus("Waiting for Steam Mobile App approval…");
-      System.err.println("[frenchpress] waiting for Steam Mobile App approval");
+      log.info("[frenchpress] waiting for Steam Mobile App approval");
       return CompletableFuture.completedFuture(true);
     }
 
@@ -364,10 +365,14 @@ public final class SteamSession {
             false,
             ClassLoader.getSystemClassLoader());
         Method nativeLaunchStatus = sysBoot.getDeclaredMethod("nativeLaunchStatus", String.class);
-        nativeLaunchStatus.setAccessible(true);
-        nativeLaunchStatus.invoke(null, message);
+        try {
+          nativeLaunchStatus.setAccessible(true);
+          nativeLaunchStatus.invoke(null, message);
+        } finally {
+          nativeLaunchStatus.setAccessible(false);
+        }
       } catch (Throwable t) {
-        System.err.println("[frenchpress] launch-status bridge unavailable: " + t);
+        log.log(Level.WARNING, "[frenchpress] launch-status bridge unavailable", t);
       }
     }
   }
@@ -403,7 +408,7 @@ public final class SteamSession {
       synchronized (tickets) { tickets.put(handle, info); }
       return handle;
     } catch (Exception e) {
-      System.err.println("[frenchpress] getAuthSessionTicket failed: " + e);
+      log.log(Level.SEVERE, "[frenchpress] getAuthSessionTicket failed", e);
       return 0;
     }
   }
