@@ -26,8 +26,8 @@ public class SteamUser
   }
 
   public interface SteamServerCallback {
-    void steamServersConnected ();
-    void steamServersDisconnected ();
+    default void steamServersConnected () {}
+    default void steamServersDisconnected () {}
   }
 
   public interface MicroTxnCallback {
