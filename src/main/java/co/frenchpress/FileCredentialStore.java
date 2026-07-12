@@ -99,25 +99,47 @@ public final class FileCredentialStore implements CredentialStore {
     }
   }
 
-  private static SecretKey getOrGenerateKey () throws Exception {
-    Preferences prefs = Preferences.userNodeForPackage(FileCredentialStore.class);
-    String encodedKey = prefs.get("frenchpress_aes_key", null);
-    if (encodedKey != null) {
-      byte[] decodedKey = Base64.getDecoder().decode(encodedKey);
-      return new SecretKeySpec(decodedKey, 0, decodedKey.length, "AES");
+  private static volatile SecretKey cachedKey = null;
+  private static final SecureRandom secureRandom = new SecureRandom();
+  private static final ThreadLocal<Cipher> cipherCache = ThreadLocal.withInitial(() -> {
+    try {
+      return Cipher.getInstance("AES/GCM/NoPadding");
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to initialize Cipher", e);
     }
-    KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-    keyGen.init(128);
-    SecretKey secretKey = keyGen.generateKey();
-    prefs.put("frenchpress_aes_key", Base64.getEncoder().encodeToString(secretKey.getEncoded()));
-    return secretKey;
+  });
+
+  private static SecretKey getOrGenerateKey () throws Exception {
+    if (cachedKey != null) {
+      return cachedKey;
+    }
+
+    synchronized (FileCredentialStore.class) {
+      if (cachedKey != null) {
+        return cachedKey;
+      }
+
+      Preferences prefs = Preferences.userNodeForPackage(FileCredentialStore.class);
+      String encodedKey = prefs.get("frenchpress_aes_key", null);
+      if (encodedKey != null) {
+        byte[] decodedKey = Base64.getDecoder().decode(encodedKey);
+        cachedKey = new SecretKeySpec(decodedKey, 0, decodedKey.length, "AES");
+        return cachedKey;
+      }
+      KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+      keyGen.init(128);
+      SecretKey secretKey = keyGen.generateKey();
+      prefs.put("frenchpress_aes_key", Base64.getEncoder().encodeToString(secretKey.getEncoded()));
+      cachedKey = secretKey;
+      return cachedKey;
+    }
   }
 
   private static String encrypt (String data) throws Exception {
     SecretKey key = getOrGenerateKey();
-    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+    Cipher cipher = cipherCache.get();
     byte[] iv = new byte[12];
-    new SecureRandom().nextBytes(iv);
+    secureRandom.nextBytes(iv);
     GCMParameterSpec parameterSpec = new GCMParameterSpec(128, iv);
     cipher.init(Cipher.ENCRYPT_MODE, key, parameterSpec);
     byte[] encryptedData = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
@@ -132,7 +154,7 @@ public final class FileCredentialStore implements CredentialStore {
     SecretKey key = getOrGenerateKey();
     byte[] cipherMessage = Base64.getDecoder().decode(encryptedData);
 
-    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+    Cipher cipher = cipherCache.get();
     GCMParameterSpec parameterSpec = new GCMParameterSpec(128, cipherMessage, 0, 12);
     cipher.init(Cipher.DECRYPT_MODE, key, parameterSpec);
     byte[] plainText = cipher.doFinal(cipherMessage, 12, cipherMessage.length - 12);
