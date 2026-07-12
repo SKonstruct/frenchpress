@@ -1,5 +1,7 @@
 package com.threerings.froth;
 
+import java.util.logging.Logger;
+
 /**
  * Shim — SK references these enums and data classes as types but never
  * invokes any method here, so the bodies all throw rather than pretend to
@@ -7,6 +9,8 @@ package com.threerings.froth;
  */
 public class SteamInput
 {
+  private static final Logger log = Logger.getLogger(SteamInput.class.getName());
+
   public static final int MAX_COUNT = 16;
   public static final int MAX_ACTIVE_LAYERS = 16;
   public static final int MAX_ORIGINS = 8;
@@ -72,7 +76,7 @@ public class SteamInput
   }
 
   private static void warn () {
-    System.err.println("[frenchpress] WARNING: SteamInput method called but stubbed/unused");
+    log.warning("[frenchpress] WARNING: SteamInput method called but stubbed/unused");
   }
 
   public static boolean init (boolean explicitlyCallRunFrame) { warn(); return false; }

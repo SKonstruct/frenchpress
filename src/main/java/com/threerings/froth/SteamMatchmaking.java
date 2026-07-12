@@ -1,5 +1,7 @@
 package com.threerings.froth;
 
+import java.util.logging.Logger;
+
 /**
  * Shim — SK references these enums/callback interfaces as types but never
  * invokes any method here, so the bodies all throw rather than pretend to
@@ -7,6 +9,8 @@ package com.threerings.froth;
  */
 public class SteamMatchmaking
 {
+  private static final Logger log = Logger.getLogger(SteamMatchmaking.class.getName());
+
   public enum LobbyType {
     PRIVATE, FRIENDS_ONLY, PUBLIC, INVISIBLE, PRIVATE_UNIQUE
   }
@@ -38,7 +42,7 @@ public class SteamMatchmaking
   }
 
   private static void warn () {
-    System.err.println("[frenchpress] WARNING: SteamMatchmaking method called but stubbed/unused");
+    log.warning("[frenchpress] WARNING: SteamMatchmaking method called but stubbed/unused");
   }
 
   public static void addGameLobbyJoinRequestCallback (GameLobbyJoinRequestCallback callback) {
