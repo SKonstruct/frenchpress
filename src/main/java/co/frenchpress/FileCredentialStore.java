@@ -34,6 +34,14 @@ public final class FileCredentialStore implements CredentialStore {
 
   private static final Logger log = Logger.getLogger(FileCredentialStore.class.getName());
 
+  private static final ThreadLocal<Cipher> CIPHER_CACHE = ThreadLocal.withInitial(() -> {
+    try {
+      return Cipher.getInstance("AES/GCM/NoPadding");
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to initialize AES/GCM/NoPadding Cipher", e);
+    }
+  });
+
   @Override public String load () {
     try {
       Path p = path();
@@ -115,7 +123,7 @@ public final class FileCredentialStore implements CredentialStore {
 
   private static String encrypt (String data) throws Exception {
     SecretKey key = getOrGenerateKey();
-    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+    Cipher cipher = CIPHER_CACHE.get();
     byte[] iv = new byte[12];
     new SecureRandom().nextBytes(iv);
     GCMParameterSpec parameterSpec = new GCMParameterSpec(128, iv);
@@ -132,7 +140,7 @@ public final class FileCredentialStore implements CredentialStore {
     SecretKey key = getOrGenerateKey();
     byte[] cipherMessage = Base64.getDecoder().decode(encryptedData);
 
-    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+    Cipher cipher = CIPHER_CACHE.get();
     GCMParameterSpec parameterSpec = new GCMParameterSpec(128, cipherMessage, 0, 12);
     cipher.init(Cipher.DECRYPT_MODE, key, parameterSpec);
     byte[] plainText = cipher.doFinal(cipherMessage, 12, cipherMessage.length - 12);
