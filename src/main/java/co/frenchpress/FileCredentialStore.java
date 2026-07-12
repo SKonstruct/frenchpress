@@ -33,6 +33,7 @@ import javax.crypto.spec.SecretKeySpec;
 public final class FileCredentialStore implements CredentialStore {
 
   private static final Logger log = Logger.getLogger(FileCredentialStore.class.getName());
+  private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
   @Override public String load () {
     try {
@@ -117,7 +118,7 @@ public final class FileCredentialStore implements CredentialStore {
     SecretKey key = getOrGenerateKey();
     Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
     byte[] iv = new byte[12];
-    new SecureRandom().nextBytes(iv);
+    SECURE_RANDOM.nextBytes(iv);
     GCMParameterSpec parameterSpec = new GCMParameterSpec(128, iv);
     cipher.init(Cipher.ENCRYPT_MODE, key, parameterSpec);
     byte[] encryptedData = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
