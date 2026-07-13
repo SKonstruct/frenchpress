@@ -75,8 +75,6 @@ public class SteamInput
     public float rotVelX, rotVelY, rotVelZ;
   }
 
-  private static final Logger log = Logger.getLogger(SteamInput.class.getName());
-
   private static void warn () {
     log.warning("[frenchpress] WARNING: SteamInput method called but stubbed/unused");
   }

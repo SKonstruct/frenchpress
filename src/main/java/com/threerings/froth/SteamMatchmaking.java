@@ -41,8 +41,6 @@ public class SteamMatchmaking
     void gameLobbyJoinRequest (long steamIdLobby, long steamIdFriend);
   }
 
-  private static final Logger log = Logger.getLogger(SteamMatchmaking.class.getName());
-
   private static void warn () {
     log.warning("[frenchpress] WARNING: SteamMatchmaking method called but stubbed/unused");
   }
