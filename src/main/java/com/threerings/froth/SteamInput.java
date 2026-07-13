@@ -9,6 +9,8 @@ import java.util.logging.Logger;
  */
 public class SteamInput
 {
+  private static final Logger log = Logger.getLogger(SteamInput.class.getName());
+
   public static final int MAX_COUNT = 16;
   public static final int MAX_ACTIVE_LAYERS = 16;
   public static final int MAX_ORIGINS = 8;

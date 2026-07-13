@@ -9,6 +9,8 @@ import java.util.logging.Logger;
  */
 public class SteamMatchmaking
 {
+  private static final Logger log = Logger.getLogger(SteamMatchmaking.class.getName());
+
   public enum LobbyType {
     PRIVATE, FRIENDS_ONLY, PUBLIC, INVISIBLE, PRIVATE_UNIQUE
   }
