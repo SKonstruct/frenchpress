@@ -1,5 +1,7 @@
 package com.threerings.froth;
 
+import java.util.logging.Logger;
+
 /**
  * Shim — SK references these enums/callback interfaces as types but never
  * invokes any method here, so the bodies all throw rather than pretend to
@@ -37,8 +39,10 @@ public class SteamMatchmaking
     void gameLobbyJoinRequest (long steamIdLobby, long steamIdFriend);
   }
 
+  private static final Logger log = Logger.getLogger(SteamMatchmaking.class.getName());
+
   private static void warn () {
-    System.err.println("[frenchpress] WARNING: SteamMatchmaking method called but stubbed/unused");
+    log.warning("[frenchpress] WARNING: SteamMatchmaking method called but stubbed/unused");
   }
 
   public static void addGameLobbyJoinRequestCallback (GameLobbyJoinRequestCallback callback) {
