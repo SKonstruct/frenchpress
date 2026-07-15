@@ -421,7 +421,11 @@ public final class SteamSession {
 
   public void disconnect () {
     running = false;
-    try { client.disconnect(); } catch (Exception ignored) {}
+    try {
+      client.disconnect();
+    } catch (Exception e) {
+      log.log(Level.WARNING, "Error disconnecting Steam client", e);
+    }
   }
 
   // -------------------------------------------------------------------------
