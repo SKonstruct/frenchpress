@@ -429,7 +429,11 @@ public final class SteamSession {
     if (pumpExecutor != null) {
       pumpExecutor.shutdownNow();
     }
-    try { client.disconnect(); } catch (Exception ignored) {}
+    try {
+      client.disconnect();
+    } catch (Exception e) {
+      log.log(Level.WARNING, "Error disconnecting Steam client", e);
+    }
   }
 
   // -------------------------------------------------------------------------
