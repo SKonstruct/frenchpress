@@ -24,6 +24,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
@@ -211,14 +213,17 @@ public final class SteamSession {
       if (done.getCount() > 0) done.countDown();
     });
 
-    Thread pump = new Thread(() -> {
+    ExecutorService pumpExecutor = Executors.newSingleThreadExecutor(r -> {
+      Thread t = new Thread(r, "frenchpress-steam-callbacks");
+      t.setDaemon(true);
+      return t;
+    });
+    session.pumpExecutor = pumpExecutor;
+    pumpExecutor.submit(() -> {
       while (session.running) {
         manager.runWaitCallbacks(1000L);
       }
-    }, "frenchpress-steam-callbacks");
-    pump.setDaemon(true);
-    session.pump = pump;
-    pump.start();
+    });
 
     log.info("[frenchpress] connecting to Steam...");
     // Keep-alive bracket: on Android the host process is killed when the user
@@ -421,6 +426,9 @@ public final class SteamSession {
 
   public void disconnect () {
     running = false;
+    if (pumpExecutor != null) {
+      pumpExecutor.shutdownNow();
+    }
     try {
       client.disconnect();
     } catch (Exception e) {
@@ -439,7 +447,7 @@ public final class SteamSession {
   private final Map<Integer, TicketInfo> tickets = new HashMap<>();
   private volatile long steamId;
   private volatile boolean running = true;
-  private Thread pump;
+  private ExecutorService pumpExecutor;
 
   private static final AtomicInteger NEXT_HANDLE = new AtomicInteger(1);
   private static volatile SteamSession INSTANCE;
