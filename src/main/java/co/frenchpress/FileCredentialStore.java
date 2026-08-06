@@ -101,6 +101,8 @@ public final class FileCredentialStore implements CredentialStore {
 
   private static volatile SecretKey cachedKey = null;
   private static final SecureRandom secureRandom = new SecureRandom();
+  private static final Base64.Decoder BASE64_DECODER = Base64.getDecoder();
+  private static final Base64.Encoder BASE64_ENCODER = Base64.getEncoder();
   private static final ThreadLocal<Cipher> cipherCache = ThreadLocal.withInitial(() -> {
     try {
       return Cipher.getInstance("AES/GCM/NoPadding");
@@ -122,14 +124,14 @@ public final class FileCredentialStore implements CredentialStore {
       Preferences prefs = Preferences.userNodeForPackage(FileCredentialStore.class);
       String encodedKey = prefs.get("frenchpress_aes_key", null);
       if (encodedKey != null) {
-        byte[] decodedKey = Base64.getDecoder().decode(encodedKey);
+        byte[] decodedKey = BASE64_DECODER.decode(encodedKey);
         cachedKey = new SecretKeySpec(decodedKey, 0, decodedKey.length, "AES");
         return cachedKey;
       }
       KeyGenerator keyGen = KeyGenerator.getInstance("AES");
       keyGen.init(128);
       SecretKey secretKey = keyGen.generateKey();
-      prefs.put("frenchpress_aes_key", Base64.getEncoder().encodeToString(secretKey.getEncoded()));
+      prefs.put("frenchpress_aes_key", BASE64_ENCODER.encodeToString(secretKey.getEncoded()));
       cachedKey = secretKey;
       return cachedKey;
     }
@@ -147,12 +149,12 @@ public final class FileCredentialStore implements CredentialStore {
     ByteBuffer byteBuffer = ByteBuffer.allocate(iv.length + encryptedData.length);
     byteBuffer.put(iv);
     byteBuffer.put(encryptedData);
-    return Base64.getEncoder().encodeToString(byteBuffer.array());
+    return BASE64_ENCODER.encodeToString(byteBuffer.array());
   }
 
   private static String decrypt (String encryptedData) throws Exception {
     SecretKey key = getOrGenerateKey();
-    byte[] cipherMessage = Base64.getDecoder().decode(encryptedData);
+    byte[] cipherMessage = BASE64_DECODER.decode(encryptedData);
 
     Cipher cipher = cipherCache.get();
     GCMParameterSpec parameterSpec = new GCMParameterSpec(128, cipherMessage, 0, 12);
