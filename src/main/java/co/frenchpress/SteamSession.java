@@ -171,18 +171,34 @@ public final class SteamSession {
         if (guardData != null && !guardData.isEmpty()) details.guardData = guardData;
         details.authenticator = new PushAuthenticator(prompt);
 
-        var authSession = client.getAuthentication().beginAuthSessionViaCredentials(details).get();
-        AuthPollResult poll = authSession.pollingWaitForResult().get();
+        client.getAuthentication().beginAuthSessionViaCredentials(details)
+          .thenCompose(authSession -> {
+            try {
+              return authSession.pollingWaitForResult();
+            } catch (in.dragonbra.javasteam.steam.authentication.AuthenticationException e) {
+              return java.util.concurrent.CompletableFuture.failedFuture(e);
+            }
+          })
+          .thenAccept(poll -> {
+            try {
+              String newGuard = poll.getNewGuardData();
+              toPersist[0] = new StoredCreds(poll.getAccountName(),
+                poll.getRefreshToken(),
+                (newGuard != null && !newGuard.isEmpty()) ? newGuard : guardData);
 
-        String newGuard = poll.getNewGuardData();
-        toPersist[0] = new StoredCreds(poll.getAccountName(),
-          poll.getRefreshToken(),
-          (newGuard != null && !newGuard.isEmpty()) ? newGuard : guardData);
-
-        LogOnDetails logon = new LogOnDetails();
-        logon.setUsername(poll.getAccountName());
-        logon.setAccessToken(poll.getRefreshToken());
-        steamUser.logOn(logon);
+              LogOnDetails logon = new LogOnDetails();
+              logon.setUsername(poll.getAccountName());
+              logon.setAccessToken(poll.getRefreshToken());
+              steamUser.logOn(logon);
+            } catch (Throwable e) {
+              log.log(Level.SEVERE, "[frenchpress] auth flow failed inside async continuation:", e);
+              done.countDown();
+            }
+          }).exceptionally(e -> {
+            log.log(Level.SEVERE, "[frenchpress] auth flow failed:", e);
+            done.countDown();
+            return null;
+          });
       } catch (Throwable e) {
         log.log(Level.SEVERE, "[frenchpress] auth flow failed:", e);
         done.countDown();
