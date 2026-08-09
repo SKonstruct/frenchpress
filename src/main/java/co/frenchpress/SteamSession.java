@@ -283,7 +283,7 @@ public final class SteamSession {
   // StoredCreds
   // -------------------------------------------------------------------------
 
-  private static final class StoredCreds {
+  static final class StoredCreds {
     final String account;
     final String refreshToken;
     final String guardData; // may be null
