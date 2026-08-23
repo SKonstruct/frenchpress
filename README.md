@@ -49,6 +49,35 @@ either approve the sign-in from the Steam Mobile App or enter their 2FA code.
 Submitting the dialog with no username skips Steam login entirely and lets
 Spiral Knights proceed with a Three Rings / Grey Havens web account.
 
+## Security
+
+frenchpress handles the Steam password and stores a long-lived refresh token, and it
+runs **inside Spiral Knights' own JVM**, next to game code and any mods on the classpath.
+That shapes what it does:
+
+- **The prompt and the store are resolved once**, at first use, from frenchpress's own
+  classloader — not the thread-context one, which belongs to the game. A
+  `META-INF/services` entry in a game jar cannot claim either SPI, and
+  `CredentialPrompt.register` is refused once a prompt is in use. Hosts should call
+  `register` early rather than relying on `-Dfrenchpress.credentialPrompt`, which is only
+  snapshotted at class-load and so is as trustworthy as whatever ran before that.
+- **`FileCredentialStore` seals the token with AES-256-GCM, and the key sits in
+  `java.util.prefs` under the same user.** Treat that as integrity, not secrecy: a
+  tampered or planted file fails the tag and is discarded, but anyone who can read the
+  credential file can also read the key. If the host can do better — Keychain, Android
+  Keystore — inject a `CredentialStore` through the SPI; that is what it is for.
+- **Steam's transport crypto is weak in ways this library cannot fix.** The legacy
+  envelope authenticates nothing in its non-HMAC mode, the HMAC mode decrypts before it
+  verifies, and its IV carries 24 bits of entropy. `CryptoHelper` matches upstream
+  JavaSteam byte for byte here on purpose; see the javadoc on `symmetricDecrypt`.
+- **Credentials passed through the environment stay readable.** `FRENCHPRESS_STEAM_PASS`
+  is visible to every class in the JVM for the life of the process — `System.getenv`
+  caches the environment at first use, so unsetting it afterwards does not undo that.
+  Prefer a registered `CredentialPrompt` over the env vars where the host can manage it.
+
+Run the tests (`mvn test`) after touching anything above; the credential store and both
+crypto shims have round-trip and tamper-rejection coverage.
+
 ## References
 
 Three Rings Design / Grey Havens

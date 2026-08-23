@@ -65,11 +65,41 @@ public final class SteamSession {
    */
   private static final long AUTH_WAIT_SECONDS = 60;
 
-  /** @return the active session, logging in on first call. Returns null if login fails or the user chose a web account. */
-  public static synchronized SteamSession get () {
-    if (INSTANCE == null && !LOGIN_ATTEMPTED) {
+  /**
+   * @return the active session, logging in on first call. Returns null if login
+   *         fails or the user chose a web account.
+   *
+   * <p>Only the caller that wins {@code LOGIN_ATTEMPTED} performs the login;
+   * everyone else waits on {@code LOGIN_DONE}. Deliberately not
+   * {@code synchronized}: the login blocks for up to {@link #AUTH_WAIT_SECONDS},
+   * and the game calls this from {@code SteamUser.isLoggedOn()} /
+   * {@code getSteamID()}, so holding the class monitor across the wait froze
+   * the whole client for a minute whenever Steam was slow or unreachable.
+   */
+  public static SteamSession get () {
+    if (LOGIN_DONE.getCount() == 0) return INSTANCE;
+
+    boolean mine;
+    synchronized (SteamSession.class) {
+      mine = !LOGIN_ATTEMPTED;
       LOGIN_ATTEMPTED = true;
-      INSTANCE = login();
+    }
+    if (mine) {
+      try {
+        INSTANCE = login();
+      } finally {
+        LOGIN_DONE.countDown();
+      }
+      return INSTANCE;
+    }
+
+    try {
+      // Bounded by the login's own timeout; the slack covers teardown.
+      if (!LOGIN_DONE.await(AUTH_WAIT_SECONDS + 30, TimeUnit.SECONDS)) {
+        log.warning("[frenchpress] timed out waiting for the in-flight Steam login");
+      }
+    } catch (InterruptedException ie) {
+      Thread.currentThread().interrupt();
     }
     return INSTANCE;
   }
@@ -86,8 +116,8 @@ public final class SteamSession {
     // 1. Steady state: a previously stored refresh token skips password + 2FA.
     StoredCreds saved = StoredCreds.parse(store.load());
     if (saved != null) {
-      log.info("[frenchpress] trying stored refresh token for account "
-        + saved.account);
+      log.info("[frenchpress] trying stored refresh token (account len="
+        + saved.account.length() + ")");
       SteamSession s = attempt(store, saved, null, null, null, null);
       if (s != null) return s;
       // Token rejected (expired/revoked). Keep the guard token to skip 2FA
@@ -144,6 +174,7 @@ public final class SteamSession {
     SteamAuthTicket authTicket = client.getHandler(SteamAuthTicket.class);
     if (steamUser == null || authTicket == null) {
       log.severe("[frenchpress] JavaSteam handlers unavailable; aborting login");
+      try { client.disconnect(); } catch (Exception ignored) {}
       return null;
     }
 
@@ -171,8 +202,12 @@ public final class SteamSession {
         if (guardData != null && !guardData.isEmpty()) details.guardData = guardData;
         details.authenticator = new PushAuthenticator(prompt);
 
-        var authSession = client.getAuthentication().beginAuthSessionViaCredentials(details).get();
-        AuthPollResult poll = authSession.pollingWaitForResult().get();
+        // Bounded: these run on the callback pump thread, and an unbounded get()
+        // pins that thread (and its socket) forever if Steam never answers.
+        var authSession = client.getAuthentication()
+          .beginAuthSessionViaCredentials(details).get(AUTH_WAIT_SECONDS, TimeUnit.SECONDS);
+        AuthPollResult poll = authSession.pollingWaitForResult()
+          .get(AUTH_WAIT_SECONDS, TimeUnit.SECONDS);
 
         String newGuard = poll.getNewGuardData();
         toPersist[0] = new StoredCreds(poll.getAccountName(),
@@ -220,8 +255,15 @@ public final class SteamSession {
     });
     session.pumpExecutor = pumpExecutor;
     pumpExecutor.submit(() -> {
-      while (session.running) {
-        manager.runWaitCallbacks(1000L);
+      // The Future is discarded, so an escaping exception would vanish and leave
+      // the caller waiting out the full timeout. Log it and release the latch.
+      try {
+        while (session.running) {
+          manager.runWaitCallbacks(1000L);
+        }
+      } catch (Throwable t) {
+        log.log(Level.SEVERE, "[frenchpress] callback pump died", t);
+        done.countDown();
       }
     });
 
@@ -400,20 +442,47 @@ public final class SteamSession {
     return "Player";
   }
 
+  /**
+   * Writes a fresh auth ticket into the game-supplied buffer.
+   *
+   * @return the ticket handle, or 0 on failure — in which case {@code out} is
+   *         left untouched.
+   */
   public int getAuthSessionTicket (ByteBuffer out) {
+    if (out == null) {
+      log.severe("[frenchpress] getAuthSessionTicket called with a null buffer");
+      return 0;
+    }
+    TicketInfo info = null;
     try {
-      TicketInfo info = authTicket.getAuthSessionTicket(SK_APPID)
-        .get(30, TimeUnit.SECONDS);
+      info = authTicket.getAuthSessionTicket(SK_APPID).get(30, TimeUnit.SECONDS);
       byte[] bytes = info.getTicket();
+      if (bytes == null) {
+        log.severe("[frenchpress] Steam returned an empty auth ticket");
+        info.close();
+        return 0;
+      }
+      // Check before mutating: clearing first and letting put() overflow left the
+      // caller holding a half-written buffer plus a 0 "failure" return.
+      if (bytes.length > out.remaining()) {
+        log.severe("[frenchpress] auth ticket is " + bytes.length
+          + " bytes but the buffer holds " + out.remaining());
+        info.close();
+        return 0;
+      }
+      int handle = NEXT_HANDLE.getAndIncrement();
+      synchronized (tickets) { tickets.put(handle, info); }
       ByteBuffer dst = out.order(ByteOrder.LITTLE_ENDIAN);
       dst.clear();
       dst.put(bytes);
       dst.flip();
-      int handle = NEXT_HANDLE.getAndIncrement();
-      synchronized (tickets) { tickets.put(handle, info); }
       return handle;
     } catch (Exception e) {
       log.log(Level.SEVERE, "[frenchpress] getAuthSessionTicket failed", e);
+      // Close it, or the ticket stays live Steam-side with nothing tracking it.
+      if (info != null) {
+        try { info.close(); } catch (Exception ignored) {}
+      }
       return 0;
     }
   }
@@ -426,6 +495,16 @@ public final class SteamSession {
 
   public void disconnect () {
     running = false;
+    // Cancel anything the game never handed back, so the tickets do not stay
+    // live Steam-side after we are gone.
+    synchronized (tickets) {
+      for (TicketInfo info : tickets.values()) {
+        try { info.close(); } catch (Exception e) {
+          log.log(Level.WARNING, "[frenchpress] failed to close auth ticket", e);
+        }
+      }
+      tickets.clear();
+    }
     if (pumpExecutor != null) {
       pumpExecutor.shutdownNow();
     }
@@ -447,9 +526,11 @@ public final class SteamSession {
   private final Map<Integer, TicketInfo> tickets = new HashMap<>();
   private volatile long steamId;
   private volatile boolean running = true;
-  private ExecutorService pumpExecutor;
+  // Written by the login thread, read by whichever thread calls disconnect().
+  private volatile ExecutorService pumpExecutor;
 
   private static final AtomicInteger NEXT_HANDLE = new AtomicInteger(1);
   private static volatile SteamSession INSTANCE;
   private static volatile boolean LOGIN_ATTEMPTED;
+  private static final CountDownLatch LOGIN_DONE = new CountDownLatch(1);
 }

@@ -132,6 +132,18 @@ public class CryptoHelper {
         };
     }
 
+    /**
+     * Steam's legacy envelope: AES-256-CBC whose IV is carried in the first 16
+     * bytes, itself AES-ECB-encrypted under the same key. Note what this does
+     * <i>not</i> have: the IV is unauthenticated, and in this (non-HMAC) mode
+     * nothing covers the ciphertext either, so an attacker who can modify the
+     * stream controls the recovered IV and therefore the first plaintext block.
+     * The HMAC variant below decrypts before it verifies, which is a padding
+     * oracle by exception type and by timing, and derives its IV from 24 bits
+     * of entropy. All three are properties of the protocol and match upstream
+     * JavaSteam byte for byte — they cannot be fixed here without breaking
+     * interoperability with Steam.
+     */
     public static byte[] symmetricDecrypt(byte[] input, byte[] key) throws CryptoException {
         return symmetricDecrypt(input, key, new Passable<>());
     }
@@ -144,7 +156,9 @@ public class CryptoHelper {
             throw new IllegalArgumentException("key is null");
         }
         if (key.length != 32) {
-            throw new IllegalArgumentException("SymmetricDecrypt used with non 32 byte key!");
+            // CryptoException, not IllegalArgumentException: NetFilterEncryption only
+            // handles the checked type, so an unchecked throw here kills the net thread.
+            throw new CryptoException("SymmetricDecrypt used with non 32 byte key!");
         }
         if (input.length < 16) {
             throw new CryptoException("SymmetricDecrypt used with input shorter than 16 bytes!");
@@ -174,6 +188,11 @@ public class CryptoHelper {
         }
         if (iv == null) {
             throw new IllegalArgumentException("iv is null");
+        }
+        if (key.length != 32) {
+            // Without this a short key silently encrypts under AES-128/192 while the
+            // decrypt side rejects it -- fail on the same condition, both directions.
+            throw new CryptoException("SymmetricEncrypt used with non 32 byte key!");
         }
         try {
             // ECB-encrypt Iv (for safety along the network)
@@ -225,11 +244,13 @@ public class CryptoHelper {
             mac.init(new SecretKeySpec(hmacSecret, "HmacSHA1"));
             byte[] hmacBytes = mac.doFinal(baos.toByteArray());
             byte[] ivBytes = iv.getValue();
-            for (int i = 0; i < ivBytes.length - 3; i++) {
-                if (hmacBytes[i] != ivBytes[i]) {
-                    throw new CryptoException("NetFilterEncryption was unable to decrypt packet: "
-                            + "HMAC from server did not match computed HMAC.");
-                }
+            // Constant-time: the byte-by-byte loop upstream uses exits early, leaking
+            // the length of the matching prefix of the tag through timing.
+            int tagLength = ivBytes.length - 3;
+            if (!MessageDigest.isEqual(Arrays.copyOf(hmacBytes, tagLength),
+                    Arrays.copyOf(ivBytes, tagLength))) {
+                throw new CryptoException("NetFilterEncryption was unable to decrypt packet: "
+                        + "HMAC from server did not match computed HMAC.");
             }
         } catch (InvalidKeyException e) {
             throw new CryptoException("NetFilterEncryption was unable to decrypt packet", e);

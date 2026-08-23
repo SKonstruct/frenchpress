@@ -75,9 +75,14 @@ public final class SwingCredentialPrompt implements CredentialPrompt {
     JButton webBtn    = new JButton("Use Web Account");
 
     signInBtn.addActionListener(e -> {
-      result[0] = new Credentials(
-        userField.getText().trim(),
-        new String(passField.getPassword()));
+      // JPasswordField hands back a char[] precisely so it can be wiped; JavaSteam's
+      // API needs a String, so one copy is unavoidable -- do not leave two.
+      char[] password = passField.getPassword();
+      try {
+        result[0] = new Credentials(userField.getText().trim(), new String(password));
+      } finally {
+        java.util.Arrays.fill(password, '\0');
+      }
       dialog.dispose();
     });
     webBtn.addActionListener(e -> dialog.dispose()); // result stays null

@@ -3,8 +3,10 @@ package co.frenchpress;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
@@ -29,23 +31,69 @@ import javax.crypto.spec.SecretKeySpec;
  *   <li>{@code $XDG_DATA_HOME/frenchpress/steam.creds}, else</li>
  *   <li>{@code ~/.local/share/frenchpress/steam.creds}</li>
  * </ol>
+ *
+ * <p><b>What the encryption here is and is not.</b> The blob is sealed with
+ * AES-256-GCM, but the key lives in {@link Preferences} under the same user
+ * account — and on the mobile hosts, inside the same app container as the
+ * file. Anyone who can read the credential file can read the key, so this
+ * defends against a casual copy of one file, not against an attacker with
+ * access to the container, a device backup, or a full-directory export. What
+ * it does buy unconditionally is <i>integrity</i>: a modified or planted file
+ * fails the GCM tag and is discarded rather than logged in with. A host that
+ * needs real confidentiality should inject a Keychain/Keystore-backed
+ * implementation through the {@link CredentialStore} SPI.
  */
 public final class FileCredentialStore implements CredentialStore {
 
   private static final Logger log = Logger.getLogger(FileCredentialStore.class.getName());
 
+  /** Current key: AES-256. */
+  private static final String PREF_KEY = "frenchpress_aes_key_v2";
+  /** Pre-2026 key: AES-128. Read once during migration, then removed. */
+  private static final String LEGACY_PREF_KEY = "frenchpress_aes_key";
+
+  private static final int IV_BYTES = 12;
+  private static final int TAG_BYTES = 16;
+
+  private static final Set<PosixFilePermission> FILE_PERMS =
+    Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+  private static final Set<PosixFilePermission> DIR_PERMS =
+    Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
+      PosixFilePermission.OWNER_EXECUTE);
+
+  private final Path file;
+
+  public FileCredentialStore () {
+    this(defaultPath());
+  }
+
+  /** Test seam: use an explicit location instead of the env-derived one. */
+  FileCredentialStore (Path file) {
+    this.file = file;
+  }
+
   @Override public String load () {
     try {
-      Path p = path();
-      if (!Files.isReadable(p)) return null;
-      String s = Files.readString(p).strip();
-      if (s.isEmpty()) return null;
-      try {
-        return decrypt(s);
-      } catch (Exception e) {
-        // Fallback for legacy plaintext credentials
-        return s;
+      if (!Files.isReadable(file)) return null;
+      String blob = Files.readString(file).strip();
+      if (blob.isEmpty()) return null;
+
+      String plain = decryptWith(currentKey(), blob);
+      if (plain != null) return plain;
+
+      // One-time migration from the AES-128 key, or from the pre-encryption
+      // plaintext format. Anything else failed authentication: discard it
+      // rather than hand an unverified blob back as credentials.
+      String migrated = readLegacy(blob);
+      if (migrated == null) {
+        log.warning("[frenchpress] stored credentials failed authentication; discarding");
+        clear();
+        return null;
       }
+      save(migrated);
+      prefs().remove(LEGACY_PREF_KEY);
+      log.info("[frenchpress] migrated stored credentials to the current key");
+      return migrated;
     } catch (Throwable t) {
       log.log(Level.WARNING, "[frenchpress] credential load failed", t);
       return null;
@@ -53,37 +101,154 @@ public final class FileCredentialStore implements CredentialStore {
   }
 
   @Override public void save (String data) {
+    Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
     try {
-      Path p = path();
-      Path dir = p.getParent();
-      if (dir != null) {
-        try {
-          Files.createDirectories(dir, PosixFilePermissions.asFileAttribute(
-            Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE)));
-        } catch (UnsupportedOperationException e) {
-          Files.createDirectories(dir);
-          trySetPerms(dir, Set.of(PosixFilePermission.OWNER_READ,
-            PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE));
-        }
-      }
-      Files.deleteIfExists(p);
-      try {
-        Files.createFile(p, PosixFilePermissions.asFileAttribute(
-          Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)));
-      } catch (UnsupportedOperationException e) {
-        // Non-POSIX FS, rely on trySetPerms later if possible
-      }
-      Files.writeString(p, encrypt(data));
-      trySetPerms(p, Set.of(PosixFilePermission.OWNER_READ,
-        PosixFilePermission.OWNER_WRITE));
+      Path dir = file.getParent();
+      if (dir != null) createDirectory(dir);
+
+      // Write to a sibling temp file created owner-only *before* it holds any
+      // ciphertext, then rename over the target. Truncating the real file in
+      // place would destroy a good token if encryption or the write failed.
+      Files.deleteIfExists(tmp);
+      createOwnerOnly(tmp);
+      Files.writeString(tmp, encrypt(data));
+      move(tmp, file);
     } catch (Throwable t) {
       log.log(Level.WARNING, "[frenchpress] credential save failed", t);
+      try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
     }
   }
 
   @Override public void clear () {
-    try { Files.deleteIfExists(path()); }
-    catch (Throwable t) { log.log(Level.WARNING, "[frenchpress] credential clear failed", t); }
+    try {
+      Files.deleteIfExists(file);
+      Files.deleteIfExists(file.resolveSibling(file.getFileName() + ".tmp"));
+      // Drop the key too: leaving it behind serves nothing once there is no
+      // ciphertext, and the next login generates a fresh one.
+      Preferences prefs = prefs();
+      prefs.remove(PREF_KEY);
+      prefs.remove(LEGACY_PREF_KEY);
+      cachedKey = null;
+    } catch (Throwable t) {
+      log.log(Level.WARNING, "[frenchpress] credential clear failed", t);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Crypto
+  // ---------------------------------------------------------------------------
+
+  private static volatile SecretKey cachedKey = null;
+  private static final SecureRandom secureRandom = new SecureRandom();
+  private static final Base64.Decoder BASE64_DECODER = Base64.getDecoder();
+  private static final Base64.Encoder BASE64_ENCODER = Base64.getEncoder();
+  private static final ThreadLocal<Cipher> cipherCache = ThreadLocal.withInitial(() -> {
+    try {
+      return Cipher.getInstance("AES/GCM/NoPadding");
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to initialize Cipher", e);
+    }
+  });
+
+  private static Preferences prefs () {
+    return Preferences.userNodeForPackage(FileCredentialStore.class);
+  }
+
+  private static SecretKey currentKey () throws Exception {
+    SecretKey key = cachedKey;
+    if (key != null) return key;
+
+    synchronized (FileCredentialStore.class) {
+      if (cachedKey != null) return cachedKey;
+
+      Preferences prefs = prefs();
+      String encoded = prefs.get(PREF_KEY, null);
+      if (encoded != null) {
+        byte[] decoded = BASE64_DECODER.decode(encoded);
+        cachedKey = new SecretKeySpec(decoded, "AES");
+        return cachedKey;
+      }
+      KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+      keyGen.init(256);
+      SecretKey generated = keyGen.generateKey();
+      prefs.put(PREF_KEY, BASE64_ENCODER.encodeToString(generated.getEncoded()));
+      cachedKey = generated;
+      return generated;
+    }
+  }
+
+  /** @return the plaintext if {@code blob} authenticates under an older format, else null. */
+  private static String readLegacy (String blob) {
+    String encoded = prefs().get(LEGACY_PREF_KEY, null);
+    if (encoded != null) {
+      byte[] decoded = BASE64_DECODER.decode(encoded);
+      String plain = decryptWith(new SecretKeySpec(decoded, "AES"), blob);
+      if (plain != null) return plain;
+    }
+    // Installs older than the encrypted format stored the Properties text
+    // verbatim. Accept only something shaped like that, never arbitrary bytes.
+    return blob.contains("refreshToken=") ? blob : null;
+  }
+
+  private static String decryptWith (SecretKey key, String blob) {
+    try {
+      byte[] message = BASE64_DECODER.decode(blob);
+      if (message.length < IV_BYTES + TAG_BYTES) return null;
+      Cipher cipher = cipherCache.get();
+      cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, message, 0, IV_BYTES));
+      return new String(cipher.doFinal(message, IV_BYTES, message.length - IV_BYTES),
+        StandardCharsets.UTF_8);
+    } catch (Exception e) {
+      // Wrong key, tampered ciphertext, or not base64 at all — all "not ours".
+      return null;
+    }
+  }
+
+  private static String encrypt (String data) throws Exception {
+    SecretKey key = currentKey();
+    Cipher cipher = cipherCache.get();
+    byte[] iv = new byte[IV_BYTES];
+    secureRandom.nextBytes(iv);
+    cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(128, iv));
+    byte[] encrypted = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
+
+    ByteBuffer buffer = ByteBuffer.allocate(iv.length + encrypted.length);
+    buffer.put(iv);
+    buffer.put(encrypted);
+    return BASE64_ENCODER.encodeToString(buffer.array());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Filesystem
+  // ---------------------------------------------------------------------------
+
+  private static void createDirectory (Path dir) throws IOException {
+    try {
+      Files.createDirectories(dir, PosixFilePermissions.asFileAttribute(DIR_PERMS));
+    } catch (UnsupportedOperationException e) {
+      Files.createDirectories(dir);
+      trySetPerms(dir, DIR_PERMS);
+    }
+  }
+
+  /** Creates {@code p} empty and owner-only, so it never exists world-readable. */
+  private static void createOwnerOnly (Path p) throws IOException {
+    try {
+      Files.createFile(p, PosixFilePermissions.asFileAttribute(FILE_PERMS));
+    } catch (UnsupportedOperationException e) {
+      Files.createFile(p);
+      trySetPerms(p, FILE_PERMS);
+    }
+  }
+
+  private static void move (Path from, Path to) throws IOException {
+    try {
+      Files.move(from, to, StandardCopyOption.REPLACE_EXISTING,
+        StandardCopyOption.ATOMIC_MOVE);
+    } catch (AtomicMoveNotSupportedException e) {
+      Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
+      trySetPerms(to, FILE_PERMS);
+    }
   }
 
   private static void trySetPerms (Path p, Set<PosixFilePermission> perms) {
@@ -99,71 +264,7 @@ public final class FileCredentialStore implements CredentialStore {
     }
   }
 
-  private static volatile SecretKey cachedKey = null;
-  private static final SecureRandom secureRandom = new SecureRandom();
-  private static final Base64.Decoder BASE64_DECODER = Base64.getDecoder();
-  private static final Base64.Encoder BASE64_ENCODER = Base64.getEncoder();
-  private static final ThreadLocal<Cipher> cipherCache = ThreadLocal.withInitial(() -> {
-    try {
-      return Cipher.getInstance("AES/GCM/NoPadding");
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to initialize Cipher", e);
-    }
-  });
-
-  private static SecretKey getOrGenerateKey () throws Exception {
-    if (cachedKey != null) {
-      return cachedKey;
-    }
-
-    synchronized (FileCredentialStore.class) {
-      if (cachedKey != null) {
-        return cachedKey;
-      }
-
-      Preferences prefs = Preferences.userNodeForPackage(FileCredentialStore.class);
-      String encodedKey = prefs.get("frenchpress_aes_key", null);
-      if (encodedKey != null) {
-        byte[] decodedKey = BASE64_DECODER.decode(encodedKey);
-        cachedKey = new SecretKeySpec(decodedKey, 0, decodedKey.length, "AES");
-        return cachedKey;
-      }
-      KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-      keyGen.init(128);
-      SecretKey secretKey = keyGen.generateKey();
-      prefs.put("frenchpress_aes_key", BASE64_ENCODER.encodeToString(secretKey.getEncoded()));
-      cachedKey = secretKey;
-      return cachedKey;
-    }
-  }
-
-  private static String encrypt (String data) throws Exception {
-    SecretKey key = getOrGenerateKey();
-    Cipher cipher = cipherCache.get();
-    byte[] iv = new byte[12];
-    secureRandom.nextBytes(iv);
-    GCMParameterSpec parameterSpec = new GCMParameterSpec(128, iv);
-    cipher.init(Cipher.ENCRYPT_MODE, key, parameterSpec);
-    byte[] encryptedData = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
-
-    ByteBuffer byteBuffer = ByteBuffer.allocate(iv.length + encryptedData.length);
-    byteBuffer.put(iv);
-    byteBuffer.put(encryptedData);
-    return BASE64_ENCODER.encodeToString(byteBuffer.array());
-  }
-
-  private static String decrypt (String encryptedData) throws Exception {
-    SecretKey key = getOrGenerateKey();
-    byte[] cipherMessage = BASE64_DECODER.decode(encryptedData);
-
-    Cipher cipher = cipherCache.get();
-    GCMParameterSpec parameterSpec = new GCMParameterSpec(128, cipherMessage, 0, 12);
-    cipher.init(Cipher.DECRYPT_MODE, key, parameterSpec);
-    byte[] plainText = cipher.doFinal(cipherMessage, 12, cipherMessage.length - 12);
-    return new String(plainText, StandardCharsets.UTF_8);
-  }
-
-  private static Path path () {
+  private static Path defaultPath () {
     String override = System.getenv("FRENCHPRESS_CRED_FILE");
     if (override != null && !override.isEmpty()) return Path.of(override);
 

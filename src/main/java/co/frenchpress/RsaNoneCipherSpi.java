@@ -12,6 +12,7 @@ import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
 import java.security.SecureRandom;
 import java.security.spec.AlgorithmParameterSpec;
 
@@ -25,20 +26,39 @@ import java.security.spec.AlgorithmParameterSpec;
  */
 public final class RsaNoneCipherSpi extends CipherSpi {
 
+    private static final String DELEGATE = "RSA/ECB/PKCS1Padding";
+
     private final Cipher delegate;
 
     public RsaNoneCipherSpi() throws GeneralSecurityException {
-        // Prevent a possible infinite loop of provider calls with the JDK name set explicitly.
-        // Using generic lookup is safe because FrenchpressJceProvider does not register RSA/ECB.
-        this.delegate = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+        // Pinned to the JDK provider. An unqualified lookup would hand the actual RSA
+        // to whichever provider ranks first in the JVM -- including one installed by
+        // other code in this process -- even though our caller asked for us by name.
+        // (There is no recursion risk either way: we never register RSA/ECB.)
+        Cipher jdk;
+        try {
+            jdk = Cipher.getInstance(DELEGATE, "SunJCE");
+        } catch (NoSuchProviderException e) {
+            jdk = Cipher.getInstance(DELEGATE);
+        }
+        this.delegate = jdk;
     }
 
+    // Unreachable while the provider registers only the full three-part name, but
+    // they must refuse rather than accept-and-ignore: silently answering to
+    // "RSA/GCM/OAEPPadding" with PKCS#1 v1.5 is exactly the kind of downgrade a
+    // later broadening of that registration would introduce.
+
     @Override protected void engineSetMode(String mode) throws NoSuchAlgorithmException {
-        // Fixed transformation; mode is implied by the registered name.
+        if (!"None".equalsIgnoreCase(mode) && !"ECB".equalsIgnoreCase(mode)) {
+            throw new NoSuchAlgorithmException("unsupported mode: " + mode);
+        }
     }
 
     @Override protected void engineSetPadding(String padding) throws NoSuchPaddingException {
-        // Fixed transformation; padding is implied by the registered name.
+        if (!"PKCS1Padding".equalsIgnoreCase(padding)) {
+            throw new NoSuchPaddingException("unsupported padding: " + padding);
+        }
     }
 
     @Override protected int engineGetBlockSize() {
