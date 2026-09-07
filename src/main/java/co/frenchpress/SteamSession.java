@@ -79,15 +79,22 @@ public final class SteamSession {
   public static SteamSession get () {
     if (LOGIN_DONE.getCount() == 0) return INSTANCE;
 
+    // Re-entrant for the thread doing the login: the old `synchronized get()` let a
+    // nested call straight through (monitors are re-entrant), and a prompt or a
+    // callback calling back into froth on that thread must not wait on itself.
+    if (Thread.currentThread() == LOGIN_THREAD) return INSTANCE;
+
     boolean mine;
     synchronized (SteamSession.class) {
       mine = !LOGIN_ATTEMPTED;
       LOGIN_ATTEMPTED = true;
+      if (mine) LOGIN_THREAD = Thread.currentThread();
     }
     if (mine) {
       try {
         INSTANCE = login();
       } finally {
+        LOGIN_THREAD = null;
         LOGIN_DONE.countDown();
       }
       return INSTANCE;
@@ -95,8 +102,13 @@ public final class SteamSession {
 
     try {
       // Bounded by the login's own timeout; the slack covers teardown.
+      long waitStart = System.currentTimeMillis();
+      log.info("[frenchpress] waiting for the in-flight Steam login");
       if (!LOGIN_DONE.await(AUTH_WAIT_SECONDS + 30, TimeUnit.SECONDS)) {
         log.warning("[frenchpress] timed out waiting for the in-flight Steam login");
+      } else {
+        log.info("[frenchpress] in-flight login finished after "
+          + (System.currentTimeMillis() - waitStart) + " ms");
       }
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
@@ -462,11 +474,12 @@ public final class SteamSession {
         info.close();
         return 0;
       }
-      // Check before mutating: clearing first and letting put() overflow left the
-      // caller holding a half-written buffer plus a 0 "failure" return.
-      if (bytes.length > out.remaining()) {
+      // Capacity, not remaining(): the write below starts with clear(), so the
+      // space available is the whole buffer regardless of where the caller left
+      // its position. Checking remaining() first would reject a buffer that fits.
+      if (bytes.length > out.capacity()) {
         log.severe("[frenchpress] auth ticket is " + bytes.length
-          + " bytes but the buffer holds " + out.remaining());
+          + " bytes but the buffer holds " + out.capacity());
         info.close();
         return 0;
       }
@@ -476,6 +489,10 @@ public final class SteamSession {
       dst.clear();
       dst.put(bytes);
       dst.flip();
+      // Logged on success too: without this, silence here is ambiguous between
+      // "issued fine" and "never called", which cost a debugging round.
+      log.info("[frenchpress] auth ticket issued [handle=" + handle
+        + ", bytes=" + bytes.length + ", capacity=" + out.capacity() + "]");
       return handle;
     } catch (Exception e) {
       log.log(Level.SEVERE, "[frenchpress] getAuthSessionTicket failed", e);
@@ -533,4 +550,6 @@ public final class SteamSession {
   private static volatile SteamSession INSTANCE;
   private static volatile boolean LOGIN_ATTEMPTED;
   private static final CountDownLatch LOGIN_DONE = new CountDownLatch(1);
+  /** The thread performing login(), so nested calls from it do not wait on themselves. */
+  private static volatile Thread LOGIN_THREAD;
 }
