@@ -172,6 +172,14 @@ public final class FileCredentialStore implements CredentialStore {
       keyGen.init(256);
       SecretKey generated = keyGen.generateKey();
       prefs.put(PREF_KEY, BASE64_ENCODER.encodeToString(generated.getEncoded()));
+      // put() is only in memory until the prefs timer (30 s) or a shutdown hook flushes it, and
+      // the Android host kills the process outright. A session closed soon after approving
+      // then kept steam.creds but lost the key that decrypts it.
+      try {
+        prefs.flush();
+      } catch (java.util.prefs.BackingStoreException e) {
+        log.log(Level.WARNING, "could not flush the credential key", e);
+      }
       cachedKey = generated;
       return generated;
     }

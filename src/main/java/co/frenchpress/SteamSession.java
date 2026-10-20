@@ -66,6 +66,13 @@ public final class SteamSession {
   private static final long AUTH_WAIT_SECONDS = 60;
 
   /**
+   * Extra time for everything before the approval wait: server list, TLS and the begin-session
+   * call. The overall login budget used to be AUTH_WAIT_SECONDS alone, so a slow connect ate the
+   * time the user needed to fetch their phone and the attempt was torn down mid-approval.
+   */
+  private static final long CONNECT_GRACE_SECONDS = 45;
+
+  /**
    * @return the active session, logging in on first call. Returns null if login
    *         fails or the user chose a web account.
    *
@@ -104,7 +111,7 @@ public final class SteamSession {
       // Bounded by the login's own timeout; the slack covers teardown.
       long waitStart = System.currentTimeMillis();
       log.info("[frenchpress] waiting for the in-flight Steam login");
-      if (!LOGIN_DONE.await(AUTH_WAIT_SECONDS + 30, TimeUnit.SECONDS)) {
+      if (!LOGIN_DONE.await(AUTH_WAIT_SECONDS + CONNECT_GRACE_SECONDS + 30, TimeUnit.SECONDS)) {
         log.warning("[frenchpress] timed out waiting for the in-flight Steam login");
       } else {
         log.info("[frenchpress] in-flight login finished after "
@@ -244,6 +251,7 @@ public final class SteamSession {
         done.countDown();
         return;
       }
+      PushAuthenticator.emitLaunchStatus("Signed in to Steam");
       session.steamId = cb.getClientSteamID() != null
         ? cb.getClientSteamID().convertToUInt64() : 0L;
       if (toPersist[0] != null) {
@@ -280,6 +288,9 @@ public final class SteamSession {
     });
 
     log.info("[frenchpress] connecting to Steam...");
+    // The overlay otherwise keeps getdown's last text for the whole login, which on a
+    // token resume is the only thing the user ever sees.
+    PushAuthenticator.emitLaunchStatus("Connecting to Steam…");
     // Keep-alive bracket: on Android the host process is killed when the user
     // tabs out to approve the sign-in (Steam Mobile App push, or reading a Steam
     // Guard code), which aborts the poll below and forces a fresh login next
@@ -290,8 +301,9 @@ public final class SteamSession {
     try {
       setKeepAlive(true);
       client.connect();
-      if (!done.await(AUTH_WAIT_SECONDS, TimeUnit.SECONDS)) {
-        log.warning("[frenchpress] login timed out after " + AUTH_WAIT_SECONDS + "s");
+      if (!done.await(AUTH_WAIT_SECONDS + CONNECT_GRACE_SECONDS, TimeUnit.SECONDS)) {
+        log.warning("[frenchpress] login timed out after "
+          + (AUTH_WAIT_SECONDS + CONNECT_GRACE_SECONDS) + "s");
       }
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
@@ -301,6 +313,7 @@ public final class SteamSession {
 
     if (!ok[0]) {
       log.warning("[frenchpress] attempt() returning null (auth not OK)");
+      PushAuthenticator.emitLaunchStatus("Steam sign-in did not complete; continuing without Steam");
       session.disconnect();
       return null;
     }
