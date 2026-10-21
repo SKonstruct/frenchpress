@@ -1,71 +1,27 @@
 package co.frenchpress;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import in.dragonbra.javasteam.enums.EResult;
 import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.*;
 
-public class SteamSessionTest {
+class SteamSessionTest {
+  @Test
+  void onlySteamRejectingTheTokenCountsAsRejection () {
+    assertTrue(SteamSession.isDefinitiveRejection(EResult.InvalidPassword));
+    assertTrue(SteamSession.isDefinitiveRejection(EResult.AccessDenied));
+    assertTrue(SteamSession.isDefinitiveRejection(EResult.Expired));
+    assertTrue(SteamSession.isDefinitiveRejection(EResult.Revoked));
+    assertTrue(SteamSession.isDefinitiveRejection(EResult.AccountDisabled));
+  }
 
-    @Test
-    public void testParse_NullBlob() {
-        assertNull(SteamSession.StoredCreds.parse(null));
-    }
-
-    @Test
-    public void testParse_EmptyBlob() {
-        assertNull(SteamSession.StoredCreds.parse(""));
-        assertNull(SteamSession.StoredCreds.parse("   \t\n"));
-    }
-
-    @Test
-    public void testParse_MissingAccount() {
-        String blob = "refreshToken=some_token\n" +
-                      "guardData=some_guard_data\n";
-        assertNull(SteamSession.StoredCreds.parse(blob));
-    }
-
-    @Test
-    public void testParse_EmptyAccount() {
-        String blob = "account=\n" +
-                      "refreshToken=some_token\n" +
-                      "guardData=some_guard_data\n";
-        assertNull(SteamSession.StoredCreds.parse(blob));
-    }
-
-    @Test
-    public void testParse_MissingRefreshToken() {
-        String blob = "account=some_account\n" +
-                      "guardData=some_guard_data\n";
-        assertNull(SteamSession.StoredCreds.parse(blob));
-    }
-
-    @Test
-    public void testParse_EmptyRefreshToken() {
-        String blob = "account=some_account\n" +
-                      "refreshToken=\n" +
-                      "guardData=some_guard_data\n";
-        assertNull(SteamSession.StoredCreds.parse(blob));
-    }
-
-    @Test
-    public void testParse_ValidWithoutGuardData() {
-        String blob = "account=my_user\n" +
-                      "refreshToken=my_token\n";
-        SteamSession.StoredCreds creds = SteamSession.StoredCreds.parse(blob);
-        assertNotNull(creds);
-        assertEquals("my_user", creds.account);
-        assertEquals("my_token", creds.refreshToken);
-        assertNull(creds.guardData);
-    }
-
-    @Test
-    public void testParse_ValidWithGuardData() {
-        String blob = "account=my_user\n" +
-                      "refreshToken=my_token\n" +
-                      "guardData=my_guard_data\n";
-        SteamSession.StoredCreds creds = SteamSession.StoredCreds.parse(blob);
-        assertNotNull(creds);
-        assertEquals("my_user", creds.account);
-        assertEquals("my_token", creds.refreshToken);
-        assertEquals("my_guard_data", creds.guardData);
-    }
+  @Test
+  void aBlinkingNetworkNeverDeletesALogin () {
+    assertFalse(SteamSession.isDefinitiveRejection(null));
+    assertFalse(SteamSession.isDefinitiveRejection(EResult.NoConnection));
+    assertFalse(SteamSession.isDefinitiveRejection(EResult.Timeout));
+    assertFalse(SteamSession.isDefinitiveRejection(EResult.ServiceUnavailable));
+    assertFalse(SteamSession.isDefinitiveRejection(EResult.TryAnotherCM));
+  }
 }

@@ -123,6 +123,16 @@ public final class SteamSession {
     return INSTANCE;
   }
 
+  /** The EResult of the last failed logon, or null if the attempt never got an answer from Steam. */
+  private static volatile EResult lastLogonFailure;
+
+  /** Only an answer from Steam that the token itself is no good justifies deleting it. */
+  static boolean isDefinitiveRejection (EResult result) {
+    return result == EResult.InvalidPassword || result == EResult.AccessDenied
+      || result == EResult.Expired || result == EResult.Revoked
+      || result == EResult.AccountDisabled;
+  }
+
   private static SteamSession login () {
     // JavaSteam's SteamAuthentication encrypts the password with the BC-spelled
     // "RSA/None/PKCS1Padding" via CryptoHelper.SEC_PROV. Register our no-BC shim
@@ -137,8 +147,16 @@ public final class SteamSession {
     if (saved != null) {
       log.info("[frenchpress] trying stored refresh token (account len="
         + saved.account.length() + ")");
+      lastLogonFailure = null;
       SteamSession s = attempt(store, saved, null, null, null, null);
       if (s != null) return s;
+      if (!isDefinitiveRejection(lastLogonFailure)) {
+        // Offline, a Steam outage or a slow connect says nothing about the token. Clearing it
+        // here deleted a good login (and its key) whenever the network blinked at launch.
+        log.warning("[frenchpress] stored token not used this time (" + lastLogonFailure
+          + "); keeping it");
+        return null;
+      }
       // Token rejected (expired/revoked). Keep the guard token to skip 2FA
       // on re-auth, then fall through to credentials.
       log.info("[frenchpress] stored token rejected; clearing and "
@@ -246,6 +264,7 @@ public final class SteamSession {
     manager.subscribe(LoggedOnCallback.class, cb -> {
       log.info("[frenchpress] LoggedOnCallback result=" + cb.getResult());
       if (cb.getResult() != EResult.OK) {
+        lastLogonFailure = cb.getResult();
         log.severe("[frenchpress] logon failed: " + cb.getResult()
           + " / " + cb.getExtendedResult());
         done.countDown();
