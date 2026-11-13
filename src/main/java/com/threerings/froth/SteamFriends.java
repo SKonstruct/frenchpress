@@ -66,6 +66,13 @@ public class SteamFriends
 
   public static long getFriendByIndex (int index, int flags) { return 0L; }
 
+  /**
+   * The friends list asks this for every row. Added to SK's froth after the shim was written; a
+   * missing method there is a NoSuchMethodError that kills the game's render thread. The shim
+   * reports no Steam friends (see {@link #getFriendCount}), so nobody is one.
+   */
+  public static boolean hasFriend (long steamId, int flags) { return false; }
+
   public static PersonaState getFriendPersonaState (long steamId) {
     return PersonaState.OFFLINE;
   }
