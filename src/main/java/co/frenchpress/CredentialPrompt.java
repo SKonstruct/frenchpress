@@ -4,7 +4,11 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * SPI for collecting Steam credentials interactively.
+ * SPI for showing the Steam sign-in QR code.
+ *
+ * <p>The user signs in by scanning the code with the Steam mobile app, or by
+ * opening the challenge URL on a device that has it. frenchpress never sees a
+ * password; the host only draws what it is handed and reports a cancel.
  *
  * <p>frenchpress ships {@link SwingCredentialPrompt} as the built-in fallback
  * for desktop environments. A host application (e.g. KnightLauncher-Android)
@@ -21,40 +25,27 @@ import java.util.logging.Logger;
 public interface CredentialPrompt {
 
   /**
-   * Prompt the user for their Steam username and password.
+   * Shows the sign-in challenge. Must not block: it is called from the login
+   * thread, and again with a new URL whenever Steam rotates the challenge, so
+   * an implementation should update what is on screen in place.
    *
-   * @return credentials to use for Steam login, or {@code null}/credentials
-   *         where {@link Credentials#isWebAccount()} is true if the user
-   *         wants to use a Three Rings / Grey Havens web account instead
+   * @param challengeUrl the link the Steam app opens to approve this sign-in
+   * @param qrModules    the QR code for {@code challengeUrl}, one row per line,
+   *                     {@code '1'} for a dark module and {@code '0'} for a light
+   *                     one, without a quiet zone (draw your own margin)
    */
-  Credentials promptForLogin ();
+  void showSignIn (String challengeUrl, String qrModules);
+
+  /** Removes the sign-in UI. Called on success, cancel, timeout and failure. Must not block. */
+  void hideSignIn ();
 
   /**
-   * Prompt for a Steam Guard authenticator (TOTP) code.
+   * Polled while waiting for approval.
    *
-   * <p>The user may also approve the sign-in from the Steam Mobile App
-   * without entering a code. Returning {@code null} or an empty string
-   * signals that preference and lets JavaSteam poll for app confirmation.
-   *
-   * @param prevWrong true if the previous code was rejected
-   * @return the authenticator code, or {@code null}/empty to wait for
-   *         Steam Mobile App approval instead
+   * @return true once the user asked to give up, which continues the launch with a
+   *         Three Rings / Grey Havens web account instead of Steam
    */
-  String promptForDeviceCode (boolean prevWrong);
-
-  /**
-   * Prompt for a Steam Guard email code.
-   *
-   * <p>The user may also approve the sign-in from the Steam Mobile App
-   * without entering a code. Returning {@code null} or an empty string
-   * signals that preference and lets JavaSteam poll for app confirmation.
-   *
-   * @param email     the address the code was sent to
-   * @param prevWrong true if the previous code was rejected
-   * @return the email code, or {@code null}/empty to wait for
-   *         Steam Mobile App approval instead
-   */
-  String promptForEmailCode (String email, boolean prevWrong);
+  boolean isSignInCancelled ();
 
   /**
    * Registers an implementation, overriding auto-detection.  Call early —
@@ -65,7 +56,7 @@ public interface CredentialPrompt {
    * cannot use ServiceLoader or system properties easily. It is also the only
    * one that is not reachable by game code after the fact: once the prompt has
    * been resolved, further calls are refused, so nothing loaded later can
-   * substitute itself for the dialog that collects the password.
+   * substitute itself for the sign-in dialog.
    */
   static void register (CredentialPrompt p) {
     Holder.register(p);
@@ -78,12 +69,13 @@ public interface CredentialPrompt {
    *   <li>Class named by system property {@code frenchpress.credentialPrompt}</li>
    *   <li>{@link java.util.ServiceLoader} discovery</li>
    *   <li>{@link SwingCredentialPrompt} if AWT/Swing is available</li>
-   *   <li>{@code null} (no interactive prompt; fall back to env vars or fail)</li>
+   *   <li>{@code null} (no sign-in UI; Steam login does not proceed)</li>
    * </ol>
    *
    * <p>Resolved <b>once</b> per JVM and cached, for the reasons in
-   * {@link CredentialStore#resolve}: this object is handed the user's password
-   * and 2FA code, and frenchpress shares a JVM with game code and mods.
+   * {@link CredentialStore#resolve}: this object shows the sign-in challenge and
+   * decides when the user has cancelled, and frenchpress shares a JVM with game
+   * code and mods.
    */
   static CredentialPrompt resolve () {
     return Holder.resolve();

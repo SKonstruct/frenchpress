@@ -4,8 +4,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Pluggable persistence for the Steam refresh token (and Steam Guard machine
- * token) so relaunches skip password + 2FA.
+ * Pluggable persistence for the Steam refresh token so relaunches skip the QR
+ * sign-in.
  *
  * <p>The blob handed to {@link #save} / returned by {@link #load} is opaque to
  * callers; treat it as a single secret string. It is roughly as sensitive as a

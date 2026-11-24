@@ -15,14 +15,16 @@
     Re-implementation of com.threerings.froth.* that bypasses libsteam_api.so
     and routes Steam auth through JavaSteam. Placed BEFORE projectx-pcode.jar
     on the classpath at runtime so its classes shadow froth-foamy's at load
-    time. Login happens lazily inside SteamAPI.init() using credentials from
-    environment variables — no separate launcher process needed.
+    time. Login happens lazily inside SteamAPI.init(): a stored refresh token,
+    otherwise a QR code approved in the Steam mobile app — no separate launcher
+    process needed.
   </description>
 
   <properties>
     <maven.compiler.release>25</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <javasteam.version>1.8.0</javasteam.version>
+    <zxing.version>3.5.4</zxing.version>
   </properties>
 
   <dependencies>
@@ -30,6 +32,11 @@
       <groupId>in.dragonbra</groupId>
       <artifactId>javasteam</artifactId>
       <version>${javasteam.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.zxing</groupId>
+      <artifactId>core</artifactId>
+      <version>${zxing.version}</version>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -86,6 +93,13 @@
                   </excludes>
                 </filter>
               </filters>
+              <!-- frenchpress shares a JVM with game code and mods; keep our zxing private. -->
+              <relocations>
+                <relocation>
+                  <pattern>com.google.zxing</pattern>
+                  <shadedPattern>co.frenchpress.shaded.zxing</shadedPattern>
+                </relocation>
+              </relocations>
               <transformers>
                 <!-- Merge the many input manifests into one, no Main-Class since this is a shadow jar. -->
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer"/>

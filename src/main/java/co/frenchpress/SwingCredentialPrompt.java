@@ -2,9 +2,9 @@ package co.frenchpress;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.*;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.awt.image.BufferedImage;
 
 /**
  * Built-in {@link CredentialPrompt} for desktop (Linux/macOS/Windows) JVM
@@ -12,11 +12,20 @@ import java.util.logging.Logger;
  *
  * <p>Not instantiated on Android or headless servers — {@link #createIfSupported}
  * returns {@code null} in those environments so the caller can fall through to
- * a different strategy (env vars, etc.).
+ * a different strategy.
  */
 public final class SwingCredentialPrompt implements CredentialPrompt {
 
-  private static final Logger log = Logger.getLogger(SwingCredentialPrompt.class.getName());
+  /** Pixels per QR module, and the quiet zone around the code in modules. */
+  private static final int MODULE_PX = 6;
+  private static final int QUIET_MODULES = 4;
+
+  private volatile boolean cancelled;
+
+  // Event dispatch thread only.
+  private JDialog dialog;
+  private JLabel qrLabel;
+  private JTextField urlField;
 
   /**
    * @return a new instance if AWT/Swing is present and a display is available,
@@ -36,173 +45,102 @@ public final class SwingCredentialPrompt implements CredentialPrompt {
   // CredentialPrompt
   // -------------------------------------------------------------------------
 
-  @Override public Credentials promptForLogin () {
-    Credentials[] result = { null };
-    runOnEdt(() -> result[0] = buildLoginDialog());
-    return result[0];
-  }
-
-  @Override public String promptForDeviceCode (boolean prevWrong) {
-    String intro = prevWrong ? "The previous code was not accepted.\n\n" : "";
-    String msg = intro
-      + "Approve the sign-in request from your Steam Mobile App,\n"
-      + "or enter your authenticator code below and click OK.";
-    return showCodeDialog(msg);
-  }
-
-  @Override public String promptForEmailCode (String email, boolean prevWrong) {
-    String intro = prevWrong ? "The previous code was not accepted.\n\n" : "";
-    String msg = intro
-      + "Approve the sign-in request from your Steam Mobile App,\n"
-      + "or enter the code sent to " + email + " below and click OK.";
-    return showCodeDialog(msg);
-  }
-
-  // -------------------------------------------------------------------------
-  // Login dialog
-  // -------------------------------------------------------------------------
-
-  private static Credentials buildLoginDialog () {
-    JDialog dialog = new JDialog((Frame) null, "Steam Login — Spiral Knights", true);
-    dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
-
-    JTextField userField = new JTextField(22);
-    JPasswordField passField = new JPasswordField(22);
-
-    Credentials[] result = { null }; // null = web account (dialog closed or button clicked)
-
-    JButton signInBtn = new JButton("Sign In");
-    JButton webBtn    = new JButton("Use Web Account");
-
-    signInBtn.addActionListener(e -> {
-      // JPasswordField hands back a char[] precisely so it can be wiped; JavaSteam's
-      // API needs a String, so one copy is unavoidable -- do not leave two.
-      char[] password = passField.getPassword();
-      try {
-        result[0] = new Credentials(userField.getText().trim(), new String(password));
-      } finally {
-        java.util.Arrays.fill(password, '\0');
+  @Override public void showSignIn (String challengeUrl, String qrModules) {
+    SwingUtilities.invokeLater(() -> {
+      if (dialog == null) buildDialog();
+      qrLabel.setIcon(new ImageIcon(render(qrModules)));
+      urlField.setText(challengeUrl);
+      urlField.setCaretPosition(0);
+      dialog.pack();
+      if (!dialog.isVisible()) {
+        dialog.setLocationRelativeTo(null);
+        dialog.setVisible(true); // non-modal: returns at once
       }
-      dialog.dispose();
     });
-    webBtn.addActionListener(e -> dialog.dispose()); // result stays null
+  }
 
-    // Enter in username field → move focus to password
-    userField.addActionListener(e -> passField.requestFocusInWindow());
-    // Enter in password field → sign in
-    passField.addActionListener(e -> signInBtn.doClick());
+  @Override public void hideSignIn () {
+    SwingUtilities.invokeLater(() -> {
+      if (dialog != null) {
+        dialog.dispose();
+        dialog = null;
+      }
+    });
+  }
 
-    // Hint label
+  @Override public boolean isSignInCancelled () {
+    return cancelled;
+  }
+
+  // -------------------------------------------------------------------------
+  // Dialog
+  // -------------------------------------------------------------------------
+
+  private void buildDialog () {
+    dialog = new JDialog((Frame) null, "Steam Sign-in — Spiral Knights", false);
+    dialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+    dialog.addWindowListener(new WindowAdapter() {
+      @Override public void windowClosing (WindowEvent e) { cancel(); }
+    });
+
     JLabel hint = new JLabel(
-      "<html>Enter your Steam credentials, or click <b>Use Web Account</b>"
-      + "<br>to log in with Three Rings / Grey Havens credentials.</html>");
+      "<html>Scan this code with the <b>Steam mobile app</b> to sign in,"
+      + "<br>or open the link below on a device that has it.</html>");
     hint.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
 
-    // Form grid
-    JPanel form = new JPanel(new GridBagLayout());
-    GridBagConstraints g = new GridBagConstraints();
-    g.insets = new Insets(3, 4, 3, 4);
-    g.anchor = GridBagConstraints.WEST;
+    qrLabel = new JLabel();
+    qrLabel.setHorizontalAlignment(SwingConstants.CENTER);
 
-    g.gridx = 0; g.gridy = 0; form.add(new JLabel("Steam Username:"), g);
-    g.gridx = 1;               form.add(userField, g);
-    g.gridx = 0; g.gridy = 1; form.add(new JLabel("Password:"), g);
-    g.gridx = 1;               form.add(passField, g);
+    urlField = new JTextField(34);
+    urlField.setEditable(false);
 
+    JButton cancelBtn = new JButton("Use Web Account");
+    cancelBtn.addActionListener(e -> cancel());
     JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-    buttons.add(webBtn);
-    buttons.add(signInBtn);
+    buttons.add(cancelBtn);
 
-    JPanel content = new JPanel(new BorderLayout(0, 0));
+    JPanel south = new JPanel(new BorderLayout(0, 8));
+    south.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+    south.add(urlField, BorderLayout.NORTH);
+    south.add(buttons, BorderLayout.SOUTH);
+
+    JPanel content = new JPanel(new BorderLayout());
     content.setBorder(BorderFactory.createEmptyBorder(14, 18, 10, 18));
-    content.add(hint,    BorderLayout.NORTH);
-    content.add(form,    BorderLayout.CENTER);
-    content.add(buttons, BorderLayout.SOUTH);
-
+    content.add(hint, BorderLayout.NORTH);
+    content.add(qrLabel, BorderLayout.CENTER);
+    content.add(south, BorderLayout.SOUTH);
     dialog.setContentPane(content);
-    dialog.getRootPane().setDefaultButton(signInBtn);
-    dialog.pack();
-    dialog.setLocationRelativeTo(null);
-    dialog.setVisible(true); // blocks until disposed
-
-    return result[0];
   }
 
-  // -------------------------------------------------------------------------
-  // 2FA code dialog (device code + email code share this layout)
-  // -------------------------------------------------------------------------
-
-  private static String showCodeDialog (String message) {
-    String[] result = { "" }; // empty = wait for app approval
-    runOnEdt(() -> result[0] = buildCodeDialog(message));
-    return result[0];
-  }
-
-  private static String buildCodeDialog (String message) {
-    JDialog dialog = new JDialog((Frame) null,
-      "Steam Verification — Spiral Knights", true);
-    dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
-
-    JTextArea msgArea = new JTextArea(message);
-    msgArea.setEditable(false);
-    msgArea.setOpaque(false);
-    msgArea.setFocusable(false);
-    msgArea.setLineWrap(true);
-    msgArea.setWrapStyleWord(true);
-    msgArea.setFont(UIManager.getFont("Label.font"));
-
-    JTextField codeField = new JTextField(14);
-
-    String[] result = { "" };
-
-    JButton okBtn = new JButton("OK");
-    okBtn.addActionListener(e -> {
-      result[0] = codeField.getText().trim();
+  private void cancel () {
+    cancelled = true;
+    if (dialog != null) {
       dialog.dispose();
-    });
-    codeField.addActionListener(e -> okBtn.doClick());
-    // Closing the dialog with X also resolves to "" (app approval path)
-
-    JPanel codeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-    codeRow.add(new JLabel("Code (optional):"));
-    codeRow.add(codeField);
-
-    JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-    buttons.add(okBtn);
-
-    JPanel content = new JPanel();
-    content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-    content.setBorder(BorderFactory.createEmptyBorder(14, 18, 10, 18));
-    content.add(msgArea);
-    content.add(Box.createVerticalStrut(12));
-    content.add(codeRow);
-    content.add(Box.createVerticalStrut(8));
-    content.add(buttons);
-
-    dialog.setContentPane(content);
-    dialog.getRootPane().setDefaultButton(okBtn);
-    // Fixed width so the message text wraps predictably
-    dialog.setPreferredSize(new Dimension(420, dialog.getPreferredSize().height));
-    dialog.pack();
-    dialog.setLocationRelativeTo(null);
-    dialog.setVisible(true);
-
-    return result[0];
+      dialog = null;
+    }
   }
 
-  // -------------------------------------------------------------------------
-  // EDT helpers
-  // -------------------------------------------------------------------------
-
-  private static void runOnEdt (Runnable r) {
-    if (SwingUtilities.isEventDispatchThread()) {
-      r.run();
-      return;
-    }
+  /** Draws the module grid black on white with a quiet zone, {@link #MODULE_PX} pixels per module. */
+  static BufferedImage render (String qrModules) {
+    String[] rows = qrModules.split("\n");
+    int size = (rows.length + 2 * QUIET_MODULES) * MODULE_PX;
+    BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+    Graphics2D g = img.createGraphics();
     try {
-      SwingUtilities.invokeAndWait(r);
-    } catch (Exception e) {
-      log.log(Level.SEVERE, "[frenchpress] Swing dialog error", e);
+      g.setColor(Color.WHITE);
+      g.fillRect(0, 0, size, size);
+      g.setColor(Color.BLACK);
+      for (int y = 0; y < rows.length; y++) {
+        for (int x = 0; x < rows[y].length(); x++) {
+          if (rows[y].charAt(x) == '1') {
+            g.fillRect((x + QUIET_MODULES) * MODULE_PX, (y + QUIET_MODULES) * MODULE_PX,
+              MODULE_PX, MODULE_PX);
+          }
+        }
+      }
+    } finally {
+      g.dispose();
     }
+    return img;
   }
 }

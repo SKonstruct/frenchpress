@@ -32,26 +32,38 @@ java --class-path frenchpress.jar:all:other:required:Spiral:Knights:JAR:files \
     com.threerings.projectx.client.ProjectXApp client
 ```
 
-## Credentials
+## Signing in
 
-On first launch (or after a stored token expires/is revoked) frenchpress needs Steam credentials.
-It tries the following in order:
+frenchpress never asks for a Steam username or password. On first launch (or after a
+stored token expires or is revoked) it signs in through a QR code approved in the Steam
+mobile app. It tries, in order:
 
-1. Stored token : Written automatically after a successful login.
-2. Environment variables : `FRENCHPRESS_STEAM_USER` and `FRENCHPRESS_STEAM_PASS`.
-3. Interactive prompt : A login dialog is shown automatically on desktop JVMs. 
-   Android hosts or applications that wish to customize the prompt may call
-   `CredentialPrompt.register(impl)` early with a native dialog implementation.
+1. Stored token : Written automatically after a successful sign-in; silent.
+2. QR code : Shown through a `CredentialPrompt`. The user scans it with the Steam mobile
+   app, or opens the challenge link on a device that has the app. Steam rotates the
+   challenge while it waits and frenchpress hands each new one to the prompt. A connection
+   that drops before the user approves is restarted with a fresh code. The whole wait is
+   capped at 5 minutes.
 
-If Steam Guard 2FA is required, a second dialog appears and the user can
-either approve the sign-in from the Steam Mobile App or enter their 2FA code.
+A `CredentialPrompt` has three methods: `showSignIn(url, qrModules)`, `hideSignIn()` and
+`isSignInCancelled()`. `qrModules` is the code as text, one row per line, `1` for a dark
+module and `0` for a light one, with no quiet zone, so hosts draw it with their own
+margin. Desktop JVMs get a Swing window automatically. Android and iOS hosts call
+`CredentialPrompt.register(impl)` early (or name a class with
+`-Dfrenchpress.credentialPrompt`) with a native implementation.
 
-Submitting the dialog with no username skips Steam login entirely and lets
-Spiral Knights proceed with a Three Rings / Grey Havens web account.
+A host can run the sign-in before the game starts, then disconnect and let the game's own copy log on
+from the stored token. If that early sign-in was cancelled or failed, the host sets
+`-Dfrenchpress.signInDeclined=true` so the game's copy does not show the QR code a second time.
+
+Cancelling, or a sign-in that runs out of time, skips Steam entirely and lets Spiral
+Knights proceed with a Three Rings / Grey Havens web account.
+
+The QR code is drawn by zxing-core, shaded into the jar under `co.frenchpress.shaded.zxing`.
 
 ## Security
 
-frenchpress handles the Steam password and stores a long-lived refresh token, and it
+frenchpress stores a long-lived refresh token, and it
 runs **inside Spiral Knights' own JVM**, next to game code and any mods on the classpath.
 That shapes what it does:
 
@@ -70,10 +82,8 @@ That shapes what it does:
   envelope authenticates nothing in its non-HMAC mode, the HMAC mode decrypts before it
   verifies, and its IV carries 24 bits of entropy. `CryptoHelper` matches upstream
   JavaSteam byte for byte here on purpose; see the javadoc on `symmetricDecrypt`.
-- **Credentials passed through the environment stay readable.** `FRENCHPRESS_STEAM_PASS`
-  is visible to every class in the JVM for the life of the process — `System.getenv`
-  caches the environment at first use, so unsetting it afterwards does not undo that.
-  Prefer a registered `CredentialPrompt` over the env vars where the host can manage it.
+- **No Steam password is ever handled.** Sign-in is approved in the Steam mobile app, so the
+  password stays there.
 
 Run the tests (`mvn test`) after touching anything above; the credential store and both
 crypto shims have round-trip and tamper-rejection coverage.
