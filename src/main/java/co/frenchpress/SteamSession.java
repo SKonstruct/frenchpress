@@ -3,6 +3,9 @@ package co.frenchpress;
 import in.dragonbra.javasteam.enums.EResult;
 import in.dragonbra.javasteam.steam.authentication.AuthPollResult;
 import in.dragonbra.javasteam.steam.authentication.AuthSessionDetails;
+import in.dragonbra.javasteam.steam.authentication.AuthenticationException;
+import in.dragonbra.javasteam.steam.authentication.CredentialsAuthSession;
+import in.dragonbra.javasteam.steam.authentication.IAuthenticator;
 import in.dragonbra.javasteam.steam.authentication.QrAuthSession;
 import in.dragonbra.javasteam.steam.handlers.steamauthticket.SteamAuthTicket;
 import in.dragonbra.javasteam.steam.handlers.steamauthticket.TicketInfo;
@@ -170,7 +173,7 @@ public final class SteamSession {
       SteamSession s;
       setKeepAlive(true);
       try {
-        s = attempt(store, saved, null, 0).session;
+        s = attempt(store, saved, null, 0, null).session;
       } finally {
         setKeepAlive(false);
       }
@@ -203,9 +206,10 @@ public final class SteamSession {
   }
 
   /**
-   * Runs the QR sign-in until it succeeds, the user cancels or the budget runs out. A session that
-   * loses its connection before the user approved is started again with a fresh code, which the
-   * prompt shows in place of the old one.
+   * Runs the sign-in until it succeeds, the user cancels or the budget runs out. It starts with the QR
+   * code; a session that loses its connection before the user approved is started again with a fresh
+   * code, which the prompt shows in place of the old one. If the user asks for a username and password
+   * instead, that runs until it works or they go back to the QR code.
    */
   private static SteamSession signInWithQr (CredentialStore store, CredentialPrompt prompt) {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(QR_WAIT_SECONDS);
@@ -215,12 +219,24 @@ public final class SteamSession {
     // restarts, or a backgrounded launcher could be killed in that gap.
     setKeepAlive(true);
     try {
-      for (int n = 1; n <= QR_MAX_ATTEMPTS; n++) {
-        Attempt a = attempt(store, null, prompt, deadline);
+      int qrAttempts = 0;
+      while (qrAttempts < QR_MAX_ATTEMPTS) {
+        if (prompt.isPasswordSignInRequested()) {
+          PasswordResult r = signInWithPassword(store, prompt);
+          if (r.session != null) return r.session;
+          if (!r.backToQr) break;
+          // The QR code gets its whole budget back: the time spent typing is not the code's.
+          deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(QR_WAIT_SECONDS);
+          qrAttempts = 0;
+          continue;
+        }
+        qrAttempts++;
+        Attempt a = attempt(store, null, prompt, deadline, null);
         if (a.session != null) return a.session;
+        if (a.password) continue;
         if (!a.restart || prompt.isSignInCancelled() || System.nanoTime() >= deadline) break;
         log.info("[frenchpress] sign-in connection dropped before approval; starting a new QR code ("
-          + n + "/" + QR_MAX_ATTEMPTS + ")");
+          + qrAttempts + "/" + QR_MAX_ATTEMPTS + ")");
         Thread.sleep(QR_RESTART_DELAY_MS);
       }
     } catch (InterruptedException ie) {
@@ -237,14 +253,76 @@ public final class SteamSession {
     return null;
   }
 
+  /** How {@link #signInWithPassword} ended: a session, or whether the user went back to the QR code. */
+  private static final class PasswordResult {
+    final SteamSession session;
+    final boolean backToQr;
+
+    PasswordResult (SteamSession session, boolean backToQr) {
+      this.session = session;
+      this.backToQr = backToQr;
+    }
+  }
+
+  /**
+   * Asks for a username and password, then signs in with them, and asks again after a failure the user
+   * can fix. Nothing connects until they submit, so typing is not racing Steam's idle timeout, and the
+   * password is dropped as soon as the attempt is over: only the refresh token is stored.
+   */
+  private static PasswordResult signInWithPassword (CredentialStore store, CredentialPrompt prompt)
+      throws InterruptedException {
+    String failure = null;
+    while (true) {
+      try {
+        prompt.showCredentialsForm(failure);
+      } catch (Throwable t) {
+        log.log(Level.WARNING, "[frenchpress] showing the credentials form failed", t);
+      }
+      String[] creds = awaitCredentials(prompt);
+      if (creds == null) return new PasswordResult(null, !prompt.isSignInCancelled());
+
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(QR_WAIT_SECONDS);
+      Attempt a = null;
+      for (int n = 1; n <= QR_MAX_ATTEMPTS; n++) {
+        a = attempt(store, null, prompt, deadline, creds);
+        if (a.session != null || !a.restart || prompt.isSignInCancelled()
+            || System.nanoTime() >= deadline) break;
+        Thread.sleep(QR_RESTART_DELAY_MS);
+      }
+      creds[0] = null;
+      creds[1] = null;
+      if (a.session != null) return new PasswordResult(a.session, false);
+      if (prompt.isSignInCancelled()) return new PasswordResult(null, false);
+      if (!prompt.isPasswordSignInRequested()) return new PasswordResult(null, true);
+      failure = a.failure != null ? a.failure : "other";
+    }
+  }
+
+  /** Waits for the form to be submitted; null once the user cancels or goes back to the QR code. */
+  private static String[] awaitCredentials (CredentialPrompt prompt) throws InterruptedException {
+    while (!prompt.isSignInCancelled() && prompt.isPasswordSignInRequested()) {
+      String[] c = prompt.takeCredentials();
+      if (c != null && c.length == 2 && c[0] != null && !c[0].isEmpty()
+          && c[1] != null && !c[1].isEmpty()) {
+        return new String[] { c[0], c[1] };
+      }
+      Thread.sleep(QR_POLL_SLICE_MS / 2);
+    }
+    return null;
+  }
+
   /** The outcome of one {@link #attempt}. */
   private static final class Attempt {
     final SteamSession session; // non-null on success
     final boolean restart;      // a QR sign-in lost its connection before the user approved
+    final boolean password;     // the user asked for a username and password while the QR code was up
+    final String failure;       // why a username/password sign-in was refused, else null
 
-    Attempt (SteamSession session, boolean restart) {
+    Attempt (SteamSession session, boolean restart, boolean password, String failure) {
       this.session = session;
       this.restart = restart;
+      this.password = password;
+      this.failure = failure;
     }
   }
 
@@ -284,12 +362,13 @@ public final class SteamSession {
 
   /**
    * One connect+logon lifecycle. {@code saved} non-null takes the token path; otherwise a QR
-   * sign-in is shown through {@code prompt} until {@code deadlineNanos}. On a successful QR
-   * sign-in the resulting refresh token is persisted to {@code store} so subsequent launches
-   * take the token path.
+   * sign-in is shown through {@code prompt} until {@code deadlineNanos}, or, with {@code creds}
+   * ({@code {username, password}}), a username/password sign-in whose Steam Guard code is asked for
+   * through {@code prompt}. On a successful sign-in the resulting refresh token is persisted to
+   * {@code store} so subsequent launches take the token path.
    */
   private static Attempt attempt (CredentialStore store, StoredCreds saved,
-      CredentialPrompt prompt, long deadlineNanos) {
+      CredentialPrompt prompt, long deadlineNanos, String[] creds) {
     SteamClient client = new SteamClient();
     CallbackManager manager = new CallbackManager(client);
     SteamUser steamUser = client.getHandler(SteamUser.class);
@@ -297,14 +376,21 @@ public final class SteamSession {
     if (steamUser == null || authTicket == null) {
       log.severe("[frenchpress] JavaSteam handlers unavailable; aborting login");
       try { client.disconnect(); } catch (Exception ignored) {}
-      return new Attempt(null, false);
+      return new Attempt(null, false, false, null);
     }
 
     SteamSession session = new SteamSession(client, manager, steamUser, authTicket);
     CountDownLatch done = new CountDownLatch(1);
     final boolean[] ok = { false };
     final boolean[] restart = { false };
+    final boolean[] password = { false };
+    final String[] failure = { null };
     final StoredCreds[] toPersist = { null };
+    // What ends a pending sign-in early: a cancel, or the user switching between the QR code and
+    // the form. Only read once a prompt exists, i.e. never on the token path.
+    final BooleanSupplier abort = creds != null
+      ? () -> prompt.isSignInCancelled() || !prompt.isPasswordSignInRequested()
+      : () -> prompt.isSignInCancelled() || prompt.isPasswordSignInRequested();
 
     manager.subscribe(ConnectedCallback.class, cb -> {
       try {
@@ -317,21 +403,32 @@ public final class SteamSession {
           return;
         }
 
-        log.info("[frenchpress] ConnectedCallback fired; starting QR sign-in");
         AuthSessionDetails details = new AuthSessionDetails();
         details.deviceFriendlyName = "Spiral Knights";
         details.persistentSession = true;
 
-        // Bounded: these run on the callback pump thread, and an unbounded get() pins that
-        // thread (and its socket) forever if Steam never answers.
-        QrAuthSession qr = client.getAuthentication().beginAuthSessionViaQR(details)
-          .get(AUTH_WAIT_SECONDS, TimeUnit.SECONDS);
-        showChallenge(prompt, qr.getChallengeUrl());
-        qr.setChallengeUrlChanged(changed -> showChallenge(prompt, changed.getChallengeUrl()));
-        emitLaunchStatus("Waiting for Steam sign-in…");
-
-        AuthPollResult poll = awaitCancellable(qr.pollingWaitForResult(),
-          prompt::isSignInCancelled, deadlineNanos);
+        AuthPollResult poll;
+        if (creds != null) {
+          log.info("[frenchpress] ConnectedCallback fired; starting username/password sign-in");
+          details.username = creds[0];
+          details.password = creds[1];
+          details.authenticator = new PromptAuthenticator(prompt, abort);
+          // Bounded, like the QR call: this runs on the callback pump thread.
+          CredentialsAuthSession credSession = client.getAuthentication()
+            .beginAuthSessionViaCredentials(details).get(AUTH_WAIT_SECONDS, TimeUnit.SECONDS);
+          emitLaunchStatus("Signing in to Steam…");
+          poll = awaitCancellable(credSession.pollingWaitForResult(), abort, deadlineNanos);
+        } else {
+          log.info("[frenchpress] ConnectedCallback fired; starting QR sign-in");
+          // Bounded: these run on the callback pump thread, and an unbounded get() pins that
+          // thread (and its socket) forever if Steam never answers.
+          QrAuthSession qr = client.getAuthentication().beginAuthSessionViaQR(details)
+            .get(AUTH_WAIT_SECONDS, TimeUnit.SECONDS);
+          showChallenge(prompt, qr.getChallengeUrl());
+          qr.setChallengeUrlChanged(changed -> showChallenge(prompt, changed.getChallengeUrl()));
+          emitLaunchStatus("Waiting for Steam sign-in…");
+          poll = awaitCancellable(qr.pollingWaitForResult(), abort, deadlineNanos);
+        }
 
         toPersist[0] = new StoredCreds(poll.getAccountName(), poll.getRefreshToken());
 
@@ -340,7 +437,9 @@ public final class SteamSession {
         logon.setAccessToken(poll.getRefreshToken());
         steamUser.logOn(logon);
       } catch (SignInAborted e) {
-        log.info("[frenchpress] QR sign-in " + e.getMessage());
+        log.info("[frenchpress] " + (creds != null ? "password" : "QR") + " sign-in " + e.getMessage());
+        // The QR code was left for the form, which is a switch rather than a failure.
+        password[0] = creds == null && !prompt.isSignInCancelled() && prompt.isPasswordSignInRequested();
         done.countDown();
       } catch (CancellationException e) {
         // Steam closes the connection after about a minute of an unanswered poll; not a
@@ -349,10 +448,17 @@ public final class SteamSession {
         restart[0] = saved == null;
         done.countDown();
       } catch (Throwable e) {
-        log.log(Level.SEVERE, "[frenchpress] auth flow failed:", e);
-        // A dead connection or an expired challenge is worth another code; the token path has
-        // nothing to retry here.
-        restart[0] = saved == null;
+        EResult refused = creds != null ? authResult(e) : null;
+        if (refused != null) {
+          // Steam answered, so this is the user's to fix, not a connection to retry.
+          log.info("[frenchpress] username/password sign-in refused: " + refused);
+          failure[0] = refused == EResult.InvalidPassword ? "password" : refused.name();
+        } else {
+          log.log(Level.SEVERE, "[frenchpress] auth flow failed:", e);
+          // A dead connection or an expired challenge is worth another code; the token path has
+          // nothing to retry here.
+          restart[0] = saved == null;
+        }
         done.countDown();
       }
     });
@@ -422,10 +528,10 @@ public final class SteamSession {
     if (!ok[0]) {
       log.warning("[frenchpress] attempt() returning null (auth not OK)");
       session.disconnect();
-      return new Attempt(null, restart[0]);
+      return new Attempt(null, restart[0], password[0], failure[0]);
     }
     log.info("[frenchpress] attempt() returning session; steamID=" + session.steamId);
-    return new Attempt(session, false);
+    return new Attempt(session, false, false, null);
   }
 
   /** Hands the challenge to the prompt. Runs on JavaSteam's threads, so it must not throw. */
@@ -434,6 +540,68 @@ public final class SteamSession {
       prompt.showSignIn(url, QrCode.encode(url));
     } catch (Throwable t) {
       log.log(Level.SEVERE, "[frenchpress] could not show the sign-in QR code", t);
+    }
+  }
+
+  /** The result Steam gave for a refused sign-in, found anywhere in the cause chain, else null. */
+  static EResult authResult (Throwable t) {
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      if (c instanceof AuthenticationException) return ((AuthenticationException) c).getResult();
+    }
+    return null;
+  }
+
+  /**
+   * Answers Steam Guard by asking the prompt. A code is always asked for, never a confirmation in the
+   * Steam app: the user is on a phone whose Steam app they would have to switch to, and the code is in
+   * the same place. Each request waits on a thread of its own, since JavaSteam asks from its poll.
+   */
+  private static final class PromptAuthenticator implements IAuthenticator {
+    private final CredentialPrompt prompt;
+    private final BooleanSupplier abort;
+
+    PromptAuthenticator (CredentialPrompt prompt, BooleanSupplier abort) {
+      this.prompt = prompt;
+      this.abort = abort;
+    }
+
+    @Override public CompletableFuture<String> getDeviceCode (boolean previousCodeWasIncorrect) {
+      return ask(false, null, previousCodeWasIncorrect);
+    }
+
+    @Override public CompletableFuture<String> getEmailCode (String email,
+        boolean previousCodeWasIncorrect) {
+      return ask(true, email, previousCodeWasIncorrect);
+    }
+
+    @Override public CompletableFuture<Boolean> acceptDeviceConfirmation () {
+      return CompletableFuture.completedFuture(false);
+    }
+
+    private CompletableFuture<String> ask (boolean email, String hint, boolean wrong) {
+      CompletableFuture<String> result = new CompletableFuture<>();
+      Thread t = new Thread(() -> {
+        try {
+          prompt.showGuardCodeForm(email, hint, wrong);
+          while (!result.isDone()) {
+            if (abort.getAsBoolean()) {
+              result.completeExceptionally(new CancellationException());
+              return;
+            }
+            String code = prompt.takeGuardCode();
+            if (code != null && !code.trim().isEmpty()) {
+              result.complete(code.trim());
+              return;
+            }
+            Thread.sleep(QR_POLL_SLICE_MS / 2);
+          }
+        } catch (Throwable e) {
+          result.completeExceptionally(e);
+        }
+      }, "frenchpress-guard-code");
+      t.setDaemon(true);
+      t.start();
+      return result;
     }
   }
 

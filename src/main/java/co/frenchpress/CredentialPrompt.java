@@ -7,8 +7,9 @@ import java.util.logging.Logger;
  * SPI for showing the Steam sign-in QR code.
  *
  * <p>The user signs in by scanning the code with the Steam mobile app, or by
- * opening the challenge URL on a device that has it. frenchpress never sees a
- * password; the host only draws what it is handed and reports a cancel.
+ * opening the challenge URL on a device that has it. A host can also offer a
+ * username and password (see {@link #isPasswordSignInRequested}); that is only
+ * ever held in memory while signing in, and only the refresh token is stored.
  *
  * <p>frenchpress ships {@link SwingCredentialPrompt} as the built-in fallback
  * for desktop environments. A host application (e.g. KnightLauncher-Android)
@@ -46,6 +47,59 @@ public interface CredentialPrompt {
    *         Three Rings / Grey Havens web account instead of Steam
    */
   boolean isSignInCancelled ();
+
+  /*
+   * Signing in with a Steam username and password, for a user with no second device to show the
+   * QR code to. Optional: a host that does not offer it keeps the defaults below and the QR code
+   * is the only way in. Everything is polled and non-blocking, like the QR methods, and the
+   * password is only ever held in memory: frenchpress stores the refresh token, never it.
+   */
+
+  /**
+   * Polled while the QR code is shown, and again while the credentials form is up.
+   *
+   * @return true while the user wants to sign in with a username and password; false again once
+   *         they go back to the QR code. This is not a cancel: a cancel still means a web account.
+   */
+  default boolean isPasswordSignInRequested () {
+    return false;
+  }
+
+  /**
+   * Shows the username and password form in place of the QR code.
+   *
+   * @param failure why the last attempt did not work ({@code "password"} for a wrong username or
+   *                password, anything else for another failure), or null on the first show
+   */
+  default void showCredentialsForm (String failure) {}
+
+  /**
+   * Polled while the credentials form is up.
+   *
+   * @return {@code {username, password}} once, after the user submitted the form, else null
+   */
+  default String[] takeCredentials () {
+    return null;
+  }
+
+  /**
+   * Asks for a Steam Guard code, in place of whatever is on screen.
+   *
+   * @param emailCode true if the code was emailed to the account, false if it comes from the
+   *                  Steam mobile app
+   * @param emailHint the masked address the code went to, or null
+   * @param wrong     true if the previous code was refused
+   */
+  default void showGuardCodeForm (boolean emailCode, String emailHint, boolean wrong) {}
+
+  /**
+   * Polled while the Steam Guard form is up.
+   *
+   * @return the code once, after the user submitted it, else null
+   */
+  default String takeGuardCode () {
+    return null;
+  }
 
   /**
    * Registers an implementation, overriding auto-detection.  Call early —
